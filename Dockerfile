@@ -2,11 +2,13 @@
 FROM ubuntu:22.04 AS builder
 
 # 必须安装 git，因为 CMake 要自动去 GitHub 下载 Crow
+# 找到 apt-get install 那一行，加上 libsqlite3-dev
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
     libasio-dev \
     git \
+    libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

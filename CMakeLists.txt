@@ -28,10 +28,10 @@ FetchContent_MakeAvailable(crow)
 # 区分平台处理依赖
 if(WIN32)
     set(ASIO_INCLUDE_DIR "D:/msys64/ucrt64/include" CACHE PATH "Path to Asio")
-    set(EXTRA_LIBS ws2_32 mswsock)
+    set(EXTRA_LIBS ws2_32 mswsock sqlite3) # 【修改】加上 sqlite3
 else()
     find_package(Threads REQUIRED)
-    set(EXTRA_LIBS Threads::Threads)
+    set(EXTRA_LIBS Threads::Threads sqlite3 dl) # 【修改】加上 sqlite3 和 dl
 endif()
 
 add_executable(server main.cpp GameManager.cpp)
