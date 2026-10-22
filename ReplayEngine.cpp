@@ -53,7 +53,10 @@ int ReplayEngine::run(uint32_t seed, const std::vector<Action>& actions) {
     int current_tick = 0;
     size_t action_idx = 0;
 
-    while (!is_dead) {
+    // 【新增】限制最大帧数，防止恶意构造 tick 导致死循环
+    const int MAX_TICKS = 10000;
+
+    while (!is_dead && current_tick < MAX_TICKS) {
         // 应用玩家操作
         if (action_idx < actions.size() && actions[action_idx].tick == current_tick) {
             std::string new_dir = actions[action_idx].dir;
@@ -99,6 +102,11 @@ int ReplayEngine::run(uint32_t seed, const std::vector<Action>& actions) {
             snake.pop_back();
         }
         current_tick++;
+    }
+
+    // 【新增】如果达到最大帧数还未死，说明是恶意重放或极限卡BUG，返回 -1 判为作弊
+    if (current_tick >= MAX_TICKS) {
+        return -1;
     }
 
     return calc_score;
