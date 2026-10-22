@@ -1,9 +1,5 @@
 #include <algorithm>
-#include <charconv>  // 【新增】用于 C++17 的 std::from_chars
-#include <chrono>
-#include <ctime>
-#include <string_view>
-#include <thread>
+#include <charconv>
 
 #include "GameManager.h"
 #include "crow.h"
@@ -19,28 +15,21 @@ int main() {
         .methods("POST"_method, "GET"_method, "OPTIONS"_method)
         .headers("Content-Type");
 
-    CROW_ROUTE(app, "/api/daily-seed")
-    ([]() {
-        std::time_t t = std::time(nullptr);
-        std::tm tm_now;
-#ifdef _WIN32
-        localtime_s(&tm_now, &t);
-#else
-        localtime_r(&t, &tm_now);
-#endif
+    CROW_ROUTE(app, "/api/start").methods("POST"_method)([&game_manager](const crow::request& req) {
+        auto body = crow::json::load(req.body);
+        std::string mode = "classic";
+        if (body && body.has("mode") && body["mode"].t() == crow::json::type::String) {
+            mode = body["mode"].s();
+            if (mode != "classic" && mode != "daily") {
+                mode = "classic";
+            }
+        }
 
-        int seed = (tm_now.tm_year + 1900) * 10000 + (tm_now.tm_mon + 1) * 100 + tm_now.tm_mday;
-
+        auto [gameId, seed] = game_manager.start_game(mode);
         crow::json::wvalue res;
+        res["gameId"] = gameId;
         res["seed"] = seed;
-        res["date"] = std::to_string(tm_now.tm_year + 1900) + "-" +
-                      std::to_string(tm_now.tm_mon + 1) + "-" + std::to_string(tm_now.tm_mday);
-        return crow::response(res);
-    });
-
-    CROW_ROUTE(app, "/api/start").methods("POST"_method)([&game_manager]() {
-        crow::json::wvalue res;
-        res["gameId"] = game_manager.start_game();
+        res["mode"] = mode;
         return crow::response(res);
     });
 
@@ -49,31 +38,37 @@ int main() {
         if (!body)
             return crow::response(400, "Invalid JSON");
 
-        if (!body.has("gameId") || !body.has("name") || !body.has("score") || !body.has("seed") ||
-            !body.has("actions")) {
-            return crow::response(400, "Missing fields");
+        // 【修复】严格的防御性字段校验
+        if (!body.has("gameId") || body["gameId"].t() != crow::json::type::String ||
+            !body.has("name") || body["name"].t() != crow::json::type::String ||
+            !body.has("score") || body["score"].t() != crow::json::type::Number ||
+            !body.has("actions") || body["actions"].t() != crow::json::type::List) {
+            return crow::response(400, "Missing or invalid fields");
         }
 
         std::string game_id = body["gameId"].s();
         std::string name = body["name"].s();
         int score = body["score"].i();
-        uint32_t seed = body["seed"].i();
-
-        std::string mode = "classic";
-        if (body.has("mode") && body["mode"].t() == crow::json::type::String)
-            mode = body["mode"].s();
 
         std::vector<Action> actions;
-        if (body["actions"].t() == crow::json::type::List) {
-            for (auto& item : body["actions"]) {
+        for (auto& item : body["actions"]) {
+            // 【修复】确保每个 action 里的 tick 和 dir 也是合法的
+            if (item.t() == crow::json::type::Object && item.has("tick") && item.has("dir")) {
                 Action act;
                 act.tick = item["tick"].i();
                 act.dir = item["dir"].s();
+                if (act.dir != "UP" && act.dir != "DOWN" && act.dir != "LEFT" &&
+                    act.dir != "RIGHT") {
+                    return crow::response(400, "Invalid direction");
+                }
                 actions.push_back(act);
+            } else {
+                return crow::response(400, "Invalid action format");
             }
         }
 
-        if (game_manager.submit_score(game_id, name, score, mode, seed, actions)) {
+        // 调后端校验
+        if (game_manager.submit_score(game_id, name, score, actions)) {
             return crow::response(200, "Score submitted successfully");
         } else {
             return crow::response(403, "Cheating detected or invalid session.");
