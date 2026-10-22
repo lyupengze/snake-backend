@@ -78,7 +78,8 @@ std::string GameManager::start_game() {
 }
 
 bool GameManager::submit_score(const std::string& game_id, const std::string& name, int score,
-                               const std::string& mode) {
+                               const std::string& mode, uint32_t seed,
+                               const std::vector<Action>& actions) {
     // 【修复 1】校验 name 和 mode 长度/合法性
     if (name.empty() || name.length() > GameConfig::kMaxNameLength)
         return false;
@@ -113,6 +114,14 @@ bool GameManager::submit_score(const std::string& game_id, const std::string& na
     std::strftime(date_buf, sizeof(date_buf), "%Y-%m-%d", &tm_now);
     std::string today_str = date_buf;
     std::string date_str = (mode == "daily") ? today_str : "all";
+
+    int calc_score = ReplayEngine::run(seed, actions);
+
+    if (calc_score != score) {
+        std::cerr << "作弊拦截: 客户端声称 " << score << " 分, 服务器重放计算为 " << calc_score
+                  << " 分" << std::endl;
+        return false;
+    }
 
     std::lock_guard<std::mutex> db_lock(db_mtx_);
 

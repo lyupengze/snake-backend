@@ -49,23 +49,31 @@ int main() {
         if (!body)
             return crow::response(400, "Invalid JSON");
 
-        // 【修复】修复 ! 优先级核弹，改用 != 判断
-        if (!body.has("gameId") || body["gameId"].t() != crow::json::type::String ||
-            !body.has("name") || body["name"].t() != crow::json::type::String ||
-            !body.has("score") || body["score"].t() != crow::json::type::Number) {
-            return crow::response(400, "Missing or invalid fields");
+        if (!body.has("gameId") || !body.has("name") || !body.has("score") || !body.has("seed") ||
+            !body.has("actions")) {
+            return crow::response(400, "Missing fields");
         }
 
         std::string game_id = body["gameId"].s();
         std::string name = body["name"].s();
         int score = body["score"].i();
+        uint32_t seed = body["seed"].i();
 
         std::string mode = "classic";
-        if (body.has("mode") && body["mode"].t() == crow::json::type::String) {
+        if (body.has("mode") && body["mode"].t() == crow::json::type::String)
             mode = body["mode"].s();
+
+        std::vector<Action> actions;
+        if (body["actions"].t() == crow::json::type::List) {
+            for (auto& item : body["actions"]) {
+                Action act;
+                act.tick = item["tick"].i();
+                act.dir = item["dir"].s();
+                actions.push_back(act);
+            }
         }
 
-        if (game_manager.submit_score(game_id, name, score, mode)) {
+        if (game_manager.submit_score(game_id, name, score, mode, seed, actions)) {
             return crow::response(200, "Score submitted successfully");
         } else {
             return crow::response(403, "Cheating detected or invalid session.");

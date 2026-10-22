@@ -34,7 +34,7 @@ else()
     set(EXTRA_LIBS Threads::Threads sqlite3 dl) # 【修改】加上 sqlite3 和 dl
 endif()
 
-add_executable(server main.cpp GameManager.cpp)
+add_executable(server main.cpp GameManager.cpp ReplayEngine.cpp)
 
 target_link_libraries(server PRIVATE Crow::Crow ${EXTRA_LIBS})
 

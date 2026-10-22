@@ -8,6 +8,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "ReplayEngine.h"  // 【引入纯逻辑引擎】
+
 struct ScoreRecord {
     std::string player_name;
     int score = 0;            // 【修复】给默认值防未初始化
@@ -33,7 +35,7 @@ public:
 
     std::string start_game();
     bool submit_score(const std::string& game_id, const std::string& name, int score,
-                      const std::string& mode);
+                      const std::string& mode, uint32_t seed, const std::vector<Action>& actions);
     std::vector<ScoreRecord> get_top_scores(const std::string& mode, int limit = 10);
 
 private:
