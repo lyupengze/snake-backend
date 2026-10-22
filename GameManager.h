@@ -1,5 +1,5 @@
 #pragma once
-#include <sqlite3.h>  // 【新增】
+#include <sqlite3.h>
 
 #include <ctime>
 #include <mutex>
@@ -10,16 +10,26 @@
 
 struct ScoreRecord {
     std::string player_name;
-    int score;
-    long long timestamp;
+    int score = 0;            // 【修复】给默认值防未初始化
+    long long timestamp = 0;  // 【修复】给默认值防未初始化
     std::string mode;
     std::string date;
 };
 
+namespace GameConfig {
+constexpr int kMaxScore = 500;
+constexpr double kMaxScorePerSecond = 50.0;
+constexpr int kSessionTimeoutSeconds = 3600;
+constexpr int kMaxNameLength = 20;
+}  // namespace GameConfig
+
 class GameManager {
 public:
-    GameManager();   // 【新增】构造函数，初始化数据库
-    ~GameManager();  // 【新增】析构函数，关闭数据库
+    GameManager();
+    ~GameManager();
+
+    GameManager(const GameManager&) = delete;
+    GameManager& operator=(const GameManager&) = delete;
 
     std::string start_game();
     bool submit_score(const std::string& game_id, const std::string& name, int score,
@@ -28,9 +38,12 @@ public:
 
 private:
     std::string generate_game_id();
-    void init_db();  // 【新增】初始化建表
+    void init_db();
+    void cleanup_expired_sessions();
 
-    std::mutex mtx_;
+    std::mutex session_mtx_;
+    std::mutex db_mtx_;
+
     std::unordered_map<std::string, std::time_t> active_sessions_;
-    sqlite3* db_;  // 【新增】数据库指针
+    sqlite3* db_ = nullptr;
 };

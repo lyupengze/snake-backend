@@ -2,3 +2,6 @@ build/
 *.exe
 Crow-master/
 .git/
+*.db
+*.db-shm
+*.db-wal
