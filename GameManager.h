@@ -12,6 +12,8 @@ struct ScoreRecord {
     std::string player_name;
     int score;
     long long timestamp;
+    std::string mode;
+    std::string date;
 };
 
 class GameManager {
@@ -20,8 +22,9 @@ public:
     ~GameManager();  // 【新增】析构函数，关闭数据库
 
     std::string start_game();
-    bool submit_score(const std::string& game_id, const std::string& name, int score);
-    std::vector<ScoreRecord> get_top_scores(int limit = 10);
+    bool submit_score(const std::string& game_id, const std::string& name, int score,
+                      const std::string& mode);
+    std::vector<ScoreRecord> get_top_scores(const std::string& mode, int limit = 10);
 
 private:
     std::string generate_game_id();
