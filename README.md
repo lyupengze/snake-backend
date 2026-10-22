@@ -1,52 +1,67 @@
-# 🐍 Snake Game C++ Backend
+# 🐍 Snake Game Backend (C++17 / Crow)
 
-这是一个基于现代 C++17 和 [Crow](https://github.com/CrowCpp/Crow) 框架开发的高性能后端服务，专为 Vue3 贪吃蛇前端提供 API 支持。
+![C++](https://img.shields.io/badge/C++-17-blue.svg)
+![Crow](https://img.shields.io/badge/Framework-Crow-green.svg)
+![SQLite](https://img.shields.io/badge/Database-SQLite-blue.svg)
+![Docker](https://img.shields.io/badge/Deploy-Docker-cyan.svg)
+
+这是一个基于 **现代 C++17** 和 **Crow 框架** 开发的高性能 RESTful API 后端服务，专为贪吃蛇游戏（Vue3 前端）提供核心数据支持。
 
 ## ✨ 核心特性
 
-- **现代 C++17 标准**：使用 `std::mt19937` 替代传统的 `rand()`，使用 `std::mutex` 配合 `std::lock_guard` 保证多线程下的数据竞争安全。
-- **服务器权威反作弊**：时间戳由服务器通过 `GameID` 会话生成，严格校验游戏时长与得分速率，拒绝任何前端篡改分数的尝试。
-- **防御性编程**：对所有传入的 JSON 数据进行字段存在性、类型及长度校验，防止非法请求导致后端崩溃。
-- **容器化部署**：提供多阶段构建的 `Dockerfile`，镜像体积小，开箱即用。
+- **极速编译与运行**：基于 `C++17` 纯手写业务逻辑，抛弃冗余依赖，应用原生 `SQLite3` C 接口进行数据持久化。
+- **高并发与线程安全**：采用**细粒度锁分离**策略（`session_mtx_` 与 `db_mtx_`），并开启 SQLite `WAL (Write-Ahead Logging)` 模式，实现读写操作完全并发不阻塞。
+- **服务器权威防作弊**：
+  - 采用 `GameID` 会话机制下发，严格校验游戏时长（防瞬间爆分）。
+  - 采用 `SQLite 预编译 (sqlite3_prepare_v2)` 与参数绑定，100% 杜绝 SQL 注入风险。
+- **每日挑战防重放**：配合前端通过同一时间种子（Seed），保证全网玩家每日食物生成序列绝对一致。
+- **防御性编程**：内置会话 TTL 清理机制（自动清理废弃请求）、入参边界校验（防 OOM 攻击）。
 
 ## 📡 API 接口说明
 
-| 方法   | 路径               | 描述                                                                 |
-| :----- | :----------------- | :------------------------------------------------------------------- |
-| `POST` | `/api/start`       | 开始一局新游戏，返回生成的 `{"gameId": "..."}`                       |
-| `POST` | `/api/score`       | 提交分数，Body 格式：`{"gameId": "...", "name": "...", "score": 10}` |
-| `GET`  | `/api/leaderboard` | 获取前 10 名的排行榜数据                                             |
+| 方法   | 路径               | 描述                                                  |
+| :----- | :----------------- | :---------------------------------------------------- |
+| `GET`  | `/api/daily-seed`  | 获取当天的每日挑战随机数种子                          |
+| `POST` | `/api/start`       | 开始游戏，获取专属 `gameId`                           |
+| `POST` | `/api/score`       | 提交分数（含 `gameId`, `mode`），服务端执行反作弊校验 |
+| `GET`  | `/api/leaderboard` | 获取排行榜（支持 `?mode=classic/daily` 参数隔离）     |
 
-## 🛠️ 本地开发 (Windows / Linux)
+## 🛠️ 本地开发与运行
 
-确保你的系统已安装支持 C++17 的编译器（如 GCC 或 Clang）、CMake 和 Git。
+### 依赖环境
+
+- GCC 9+ / Clang 7+ (支持 C++17)
+- CMake 3.14+
+- SQLite3
+
+### 编译与启动
 
 ```bash
-# 创建构建目录
 mkdir build && cd build
-
-# 配置并编译 (Windows 下如需指定 MinGW Makefiles 请自行添加 -G 参数)
 cmake ..
-cmake --build .
-
-# 运行服务
+make -j$(nproc)
 ./server
 ```
 
-后端将默认监听 `http://localhost:8080`。
+## 🐳 生产环境部署 (Docker)
 
-## 🐳 Docker 部署
-
-本项目已包含 `Dockerfile`，你可以直接在本地构建并运行：
+采用**多阶段构建**，镜像体积更小，运行更安全。使用 Docker Volume 实现数据库文件持久化。
 
 ```bash
-# 构建镜像
+# 1. 构建镜像
 docker build -t snake-backend .
 
-# 运行容器 (将本地的 8080 映射到容器的 8080)
-docker run -d -p 8080:8080 --name my-snake-api snake-backend
+# 2. 启动容器并挂载数据盘 (极其重要，防止数据丢失)
+docker run -d \
+  --name my-snake \
+  -p 8080:8080 \
+  --restart always \
+  -v /root/snake_data:/app/data \
+  snake-backend
 ```
 
-## ☁️ 云端部署注意事项
+## 🧠 架构设计亮点
 
-在部署到云平台（如 Koyeb, Render, Railway 等）时，请确保平台选择 **Docker** 作为构建环境。由于 C++ 编译需要下载第三方库，首次构建可能会耗时几分钟，请耐心等待。
+1. **面向对象封装**：将 `Session` 生命周期与 `Score` 校验逻辑完全封装在 `GameManager` 中，并在 `main.cpp` 保证单例引用传递，杜绝深拷贝。
+2. **C++17 现代特性**：利用 `std::mt19937` 替代 `rand()`，配合 `std::uniform_int_distribution` 生成高安全随机序列；使用 `std::from_chars` 实现无异常的高性能字符串解析。
+3. **跨平台兼容**：精准使用 `_WIN32` 宏与 `localtime_r/s` 适配 Linux 和 Windows 的时区处理。
