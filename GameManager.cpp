@@ -13,11 +13,17 @@ GameManager::~GameManager() {
 }
 
 void GameManager::init_db() {
-    // 数据库文件将存放在 /app/data/snake.db（后面通过 Docker 挂载出来）
-    int rc = sqlite3_open("/app/data/snake.db", &db_);
+// 数据库文件将存放在 /app/data/snake.db（后面通过 Docker 挂载出来）
+#ifdef _WIN32
+    const char* db_path = "snake.db";
+#else
+    const char* db_path = "/app/data/snake.db";
+#endif
+
+    int rc = sqlite3_open(db_path, &db_);
     if (rc != SQLITE_OK) {
         std::cerr << "无法打开数据库: " << sqlite3_errmsg(db_) << std::endl;
-        return;
+        exit(1);
     }
 
     // 建表：名字 (name) 作为主键，保证去重
