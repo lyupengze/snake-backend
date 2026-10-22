@@ -150,7 +150,6 @@ bool GameManager::submit_score(const std::string& game_id, const std::string& na
     }
 
     // ... 接下来的写数据库逻辑保持原样（用 session 里的 mode）...
-    std::time_t now = std::time(nullptr);
     std::tm tm_now;
 #ifdef _WIN32
     localtime_s(&tm_now, &now);
