@@ -25,8 +25,16 @@ RUN apt-get update && apt-get install -y tzdata libsqlite3-0 && \
 # 只拷贝编译好的二进制文件
 COPY --from=builder /app/build/server /app/server
 
+# 【新增】创建非 root 用户并设置目录权限
+RUN groupadd -r appuser && useradd -r -g appuser -u 1000 appuser && \
+    chown -R appuser:appuser /app
+
 # 声明数据卷，防止手滑丢数据
 VOLUME ["/app/data"]
 
 EXPOSE 8080
+
+# 【新增】切换为非 root 用户运行
+USER appuser
+
 CMD ["./server"]

@@ -16,6 +16,9 @@ int main() {
         .headers("Content-Type");
 
     CROW_ROUTE(app, "/api/start").methods("POST"_method)([&game_manager](const crow::request& req) {
+        if (req.body.size() > 1024) {  // 开局请求不可能超过 1KB
+            return crow::response(413, "Payload Too Large");
+        }
         auto body = crow::json::load(req.body);
         std::string mode = "classic";
         if (body && body.has("mode") && body["mode"].t() == crow::json::type::String) {
@@ -34,6 +37,9 @@ int main() {
     });
 
     CROW_ROUTE(app, "/api/score").methods("POST"_method)([&game_manager](const crow::request& req) {
+        if (req.body.size() > 500 * 1024) {
+            return crow::response(413, "Payload Too Large");
+        }
         auto body = crow::json::load(req.body);
         if (!body)
             return crow::response(400, "Invalid JSON");
@@ -47,6 +53,9 @@ int main() {
         }
 
         std::string game_id = body["gameId"].s();
+        if (game_id.length() != 16) {
+            return crow::response(400, "Invalid game ID");
+        }
         std::string name = body["name"].s();
         int score = body["score"].i();
 
@@ -54,6 +63,10 @@ int main() {
         for (auto& item : body["actions"]) {
             // 【修复】确保每个 action 里的 tick 和 dir 也是合法的
             if (item.t() == crow::json::type::Object && item.has("tick") && item.has("dir")) {
+                if (item["tick"].t() != crow::json::type::Number ||
+                    item["dir"].t() != crow::json::type::String) {
+                    return crow::response(400, "Invalid action types");
+                }
                 Action act;
                 act.tick = item["tick"].i();
                 act.dir = item["dir"].s();

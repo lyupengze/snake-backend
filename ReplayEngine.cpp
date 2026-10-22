@@ -85,11 +85,15 @@ int ReplayEngine::run(uint32_t seed, const std::vector<Action>& actions) {
             is_dead = true;
             break;
         }
-        for (auto& s : snake)
-            if (s.x == new_head.x && s.y == new_head.y) {
+        bool ate_food = (new_head.x == food.x && new_head.y == food.y);
+        size_t check_len = ate_food ? snake.size() : snake.size() - 1;
+
+        for (size_t i = 0; i < check_len; ++i) {
+            if (snake[i].x == new_head.x && snake[i].y == new_head.y) {
                 is_dead = true;
                 break;
             }
+        }
         if (is_dead)
             break;
 
