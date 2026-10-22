@@ -1,3 +1,9 @@
 build/
 *.exe
 Crow-master/
+.git/
+
+# 【新增】忽略所有 SQLite 数据库文件
+*.db
+*.db-shm
+*.db-wal
