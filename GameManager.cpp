@@ -126,21 +126,30 @@ bool GameManager::submit_score(const std::string& game_id, const std::string& na
         it->second.submitted = true;  // 标记已提交，防止重放
     }
 
-    // 在 submit_score 里，替换掉原来的 max_tick 获取逻辑
+    // 【核心修复】遍历寻找真实最大 tick，并严格校验时序
     int max_tick = 0;
+    int last_tick = -1;  // 必须是 -1，因为第一个动作的 tick 可以是 0
+
     for (const auto& act : actions) {
-        // 1. 拒绝负数 tick
+        // 1. 拒绝负数
         if (act.tick < 0) {
             std::cerr << "作弊拦截: 检测到负数 tick" << std::endl;
             return false;
         }
-        // 2. 寻找真实的最大 tick，无视乱序
+        // 2. 拒绝乱序或重复（时间不可倒流）
+        if (act.tick <= last_tick) {
+            std::cerr << "作弊拦截: 检测到乱序或重复 tick" << std::endl;
+            return false;
+        }
+        last_tick = act.tick;
+
+        // 3. 寻找真实最大 tick
         if (act.tick > max_tick) {
             max_tick = act.tick;
         }
     }
 
-    // 3. 安全兜底：如果最大 tick 离谱到超过了 10000 帧（约 25 分钟），直接拦截
+    // 4. 安全兜底：限制最大帧数
     if (max_tick > 10000) {
         std::cerr << "作弊拦截: 超过最大帧数限制" << std::endl;
         return false;
