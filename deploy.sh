@@ -14,19 +14,18 @@ echo "Frontend build completed."
 echo "Updating Backend..."
 cd /root/snake-backend
 
-# [修复] 记录拉取前的 commit hash
+# 记录拉取前的 commit hash
 BEFORE_PULL=$(git rev-parse HEAD)
 
+# 拉取最新代码
 git pull --ff-only
 
-# [修复] 记录拉取后的 commit hash
-AFTER_PULL=$(git rev-parse HEAD)
+# 获取这次拉取到底更新了哪些文件
+CHANGED_FILES=$(git diff --name-only "$BEFORE_PULL" HEAD)
 
-# 检查 commit hash 是否发生变化，如果有则重新构建镜像
-if [ "$BEFORE_PULL" = "$AFTER_PULL" ]; then
-  echo "Backend code unchanged, skipping Docker build."
-else
-  echo "Backend code changed, rebuilding Docker image..."
+# 检查这些文件里是否包含后端代码或构建配置
+if echo "$CHANGED_FILES" | grep -E '\.(cpp|h)$|^CMakeLists\.txt$|^Dockerfile$' > /dev/null; then
+  echo "Backend code changed (C++ source or build config modified), rebuilding Docker image..."
   docker build -t snake-backend .
 
   echo "Restarting container..."
@@ -42,6 +41,8 @@ else
     snake-backend
 
   echo "Backend deployment completed."
+else
+  echo "Backend code unchanged (only non-code files modified), skipping Docker build."
 fi
 
 # 3. Health Check
