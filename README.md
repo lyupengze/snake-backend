@@ -44,11 +44,13 @@
 docker build -t snake-backend .
 
 # 2. 启动容器并挂载数据卷 (极其重要，确保 SQLite 数据持久化)
+# 注意：线上使用的是 Docker named volume `snake_data_volume`，
+# 不是早期版本里的 bind mount `/root/snake_data`。两者不可混用。
 docker run -d \
   --name snake-backend \
-  -p 8080:8080 \
+  -p 127.0.0.1:8080:8080 \
   --restart always \
-  -v /root/snake_data:/app/data \
+  -v snake_data_volume:/app/data \
   snake-backend
 ```
 
