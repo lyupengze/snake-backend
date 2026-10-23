@@ -17,29 +17,37 @@
  */
 struct ScoreRecord {
     std::string player_name;
-    int score = 0;            // 初始化默认值，防止未定义行为
-    long long timestamp = 0;  // 初始化默认值，防止未定义行为
+    int score = 0;
+    long long timestamp = 0;
     std::string mode;
     std::string date;
 };
 
-/**
- * 游戏全局配置常量
- */
 namespace GameConfig {
-constexpr int kSessionTimeoutSeconds = 3600;  // 单局 Session 最大存活时间（秒）
-constexpr int kMaxNameLength = 20;            // 玩家昵称最大长度
+constexpr int kSessionTimeoutSeconds = 3600;
+constexpr int kMaxNameLength = 20;
 }  // namespace GameConfig
 
 /**
  * 单次游戏会话上下文
  */
 struct Session {
-    std::time_t created_at;  // 创建时间（用于时间悖论校验）
-    std::uint32_t seed;      // 服务器下发的权威随机种子
-    std::string mode;        // 游戏模式 (classic/daily)
-    std::string date;        // 开局时的日期字符串（用于跨日结算）
-    bool submitted = false;  // 是否已提交分数（防重放）
+    std::time_t created_at;
+    std::uint32_t seed;
+    std::string mode;
+    std::string date;
+    bool submitted = false;
+};
+
+/**
+ * [新增] 定义分数提交的具体结果，用于向路由层传递精确的 HTTP 状态码
+ */
+enum class SubmitResult {
+    Success,          // 提交成功 (200)
+    InvalidData,      // 数据不合法（如名字为空或超长） (400)
+    Cheating,         // 触发防作弊校验（如时间悖论、分数不符） (403)
+    PayloadTooLarge,  // 超出最大帧数限制（超长局） (413)
+    InternalError     // 数据库异常等内部错误 (500)
 };
 
 /**
@@ -50,26 +58,17 @@ public:
     GameManager();
     ~GameManager();
 
-    // 禁用拷贝构造和赋值，防止互斥锁和数据库句柄被错误复制
     GameManager(const GameManager&) = delete;
     GameManager& operator=(const GameManager&) = delete;
 
-    /**
-     * 玩家请求开局：生成唯一 gameId 并分配服务器权威 seed
-     * @return pair<gameId, seed>
-     */
     std::pair<std::string, std::uint32_t> start_game(const std::string& mode);
 
     /**
-     * 提交分数：触发服务器端权威重放，验证分数合法性并写入数据库
-     * @return 校验通过并成功入库返回 true，否则返回 false
+     * 提交分数：[修改] 返回具体的枚举类型，方便路由层判断
      */
-    bool submit_score(const std::string& game_id, const std::string& name, int score,
-                      const std::vector<Action>& actions);
+    SubmitResult submit_score(const std::string& game_id, const std::string& name, int score,
+                              const std::vector<Action>& actions);
 
-    /**
-     * 获取排行榜数据
-     */
     std::vector<ScoreRecord> get_top_scores(const std::string& mode, int limit = 10);
 
 private:
@@ -77,13 +76,10 @@ private:
     void init_db();
     void cleanup_expired_sessions();
 
-    // 并发保护锁
-    std::mutex session_mtx_;  // 保护 active_sessions_ 的并发读写
-    std::mutex db_mtx_;       // 保护 SQLite 连接的并发访问
+    std::mutex session_mtx_;
+    std::mutex db_mtx_;
 
-    // 内存中的活跃游戏会话池：gameId -> Session
     std::unordered_map<std::string, Session> active_sessions_;
 
-    // SQLite 数据库句柄
     sqlite3* db_ = nullptr;
 };

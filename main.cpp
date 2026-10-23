@@ -110,10 +110,22 @@ int main() {
         }
 
         // 路由层校验全部通过，交由业务层 (GameManager) 进行权威重放与数据库写入
-        if (game_manager.submit_score(game_id, name, score, actions)) {
-            return crow::response(200, "Score submitted successfully");
-        } else {
-            return crow::response(403, "Cheating detected or invalid session.");
+        SubmitResult result = game_manager.submit_score(game_id, name, score, actions);
+
+        // [体验升级] 根据业务层的精确结果，返回对应的 HTTP 状态码
+        // 前端（GameView.vue）会根据这些状态码弹出不同的 Toast 提示
+        switch (result) {
+            case SubmitResult::Success:
+                return crow::response(200, "Score submitted successfully");
+            case SubmitResult::InvalidData:
+                return crow::response(400, "Invalid data (e.g., name too long)");
+            case SubmitResult::PayloadTooLarge:
+                return crow::response(413, "Payload Too Large (game too long)");
+            case SubmitResult::Cheating:
+                return crow::response(403, "Cheating detected or invalid session.");
+            case SubmitResult::InternalError:
+            default:
+                return crow::response(500, "Internal Server Error");
         }
     });
 

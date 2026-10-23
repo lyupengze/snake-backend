@@ -116,16 +116,17 @@ std::pair<std::string, std::uint32_t> GameManager::start_game(const std::string&
 /**
  * 核心业务：处理分数提交与防作弊校验（服务器权威重放）
  */
-bool GameManager::submit_score(const std::string& game_id, const std::string& name, int score,
-                               const std::vector<Action>& actions) {
+SubmitResult GameManager::submit_score(const std::string& game_id, const std::string& name,
+                                       int score, const std::vector<Action>& actions) {
     // [校验 1] 玩家名称合法性
-    if (name.empty() || name.length() > GameConfig::kMaxNameLength)
-        return false;
+    if (name.empty() || name.length() > GameConfig::kMaxNameLength) {
+        return SubmitResult::InvalidData;
+    }
 
     // [校验 2] 防 DoS 攻击：限制单局最大操作记录数
     if (actions.size() > 10000) {
         std::cerr << "拦截: actions 数量超限 (" << actions.size() << ")" << std::endl;
-        return false;
+        return SubmitResult::PayloadTooLarge;
     }
 
     std::uint32_t real_seed = 0;
@@ -133,34 +134,34 @@ bool GameManager::submit_score(const std::string& game_id, const std::string& na
     std::string session_date = "all";
     std::time_t session_created_at = 0;
     {
-        // [校验 3] 验证 Session 有效性（是否存在、是否已被提交过）
+        // [校验 3] 验证 Session 有效性
         std::lock_guard<std::mutex> lock(session_mtx_);
         auto it = active_sessions_.find(game_id);
         if (it == active_sessions_.end() || it->second.submitted) {
             std::cerr << "拦截: session 不存在或已提交 (game_id=" << game_id << ")" << std::endl;
-            return false;
+            return SubmitResult::Cheating;
         }
 
         real_seed = it->second.seed;
         mode = it->second.mode;
         session_date = it->second.date;
         session_created_at = it->second.created_at;
-        it->second.submitted = true;  // 标记已提交，防止同一局重复提交
+        it->second.submitted = true;
     }
 
     // [校验 4] 遍历校验操作时序，寻找最大 tick
     int max_tick = 0;
-    int last_tick = -1;  // 初始值设为 -1，允许第一个动作的 tick 为 0
+    int last_tick = -1;
 
     for (const auto& act : actions) {
         if (act.tick < 0) {
             std::cerr << "作弊拦截: 检测到负数 tick" << std::endl;
-            return false;
+            return SubmitResult::Cheating;
         }
         if (act.tick <= last_tick) {
             std::cerr << "作弊拦截: 检测到乱序或重复 tick (当前=" << act.tick
                       << ", 上一个=" << last_tick << ")" << std::endl;
-            return false;
+            return SubmitResult::Cheating;
         }
         last_tick = act.tick;
 
@@ -172,11 +173,11 @@ bool GameManager::submit_score(const std::string& game_id, const std::string& na
     // [校验 5] 防极限构造 DoS：限制最大帧数
     if (max_tick > 10000) {
         std::cerr << "拦截: 超过最大帧数限制 (" << max_tick << ")" << std::endl;
-        return false;
+        return SubmitResult::PayloadTooLarge;
     }
 
-    // [校验 6] 时间悖论检测：物理耗时必须与操作帧数匹配（允许 3 秒网络延迟）
-    double expected_duration = max_tick * 0.15;  // 前端每帧 150ms
+    // [校验 6] 时间悖论检测
+    double expected_duration = max_tick * 0.15;
     std::time_t now = std::time(nullptr);
     int actual_duration = static_cast<int>(std::difftime(now, session_created_at));
 
@@ -184,15 +185,15 @@ bool GameManager::submit_score(const std::string& game_id, const std::string& na
         std::cerr << "作弊拦截: 时间悖论! 声称最大 tick: " << max_tick
                   << "，要求物理耗时: " << expected_duration << "s，实际耗时: " << actual_duration
                   << "s" << std::endl;
-        return false;
+        return SubmitResult::Cheating;
     }
 
-    // [校验 7] 核心防御：服务器使用 real_seed 重放玩家操作，计算真实分数
+    // [校验 7] 核心防御：服务器使用 real_seed 重放玩家操作
     int calc_score = ReplayEngine::run(real_seed, actions);
     if (calc_score < 0 || calc_score != score) {
         std::cerr << "作弊拦截: 声称 " << score << " 分, 实际重放 " << calc_score << " 分"
                   << std::endl;
-        return false;
+        return SubmitResult::Cheating;
     }
 
     std::tm tm_now;
@@ -204,7 +205,7 @@ bool GameManager::submit_score(const std::string& game_id, const std::string& na
 
     std::string date_str = session_date;
 
-    // [写入数据库] 使用 UPSERT 语句，只有当新分数大于已有分数时才更新
+    // [写入数据库]
     std::lock_guard<std::mutex> db_lock(db_mtx_);
     const char* sql =
         "INSERT INTO scores (name, mode, date, score, timestamp) VALUES (?, ?, ?, ?, ?) "
@@ -215,7 +216,7 @@ bool GameManager::submit_score(const std::string& game_id, const std::string& na
 
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         std::cerr << "数据库准备失败: " << sqlite3_errmsg(db_) << std::endl;
-        return false;
+        return SubmitResult::InternalError;
     }
 
     sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_TRANSIENT);
@@ -229,8 +230,10 @@ bool GameManager::submit_score(const std::string& game_id, const std::string& na
 
     if (rc != SQLITE_DONE) {
         std::cerr << "数据库写入失败: " << sqlite3_errmsg(db_) << " (rc=" << rc << ")" << std::endl;
+        return SubmitResult::InternalError;
     }
-    return rc == SQLITE_DONE;
+
+    return SubmitResult::Success;
 }
 
 /**
