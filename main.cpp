@@ -1,26 +1,44 @@
 #include <algorithm>
 #include <charconv>
+#include <string>
+#include <vector>
 
 #include "GameManager.h"
 #include "crow.h"
 #include "crow/middlewares/cors.h"
 
+/**
+ * 贪吃蛇后端服务入口 (基于 Crow 框架)
+ *
+ * 负责提供以下核心 API:
+ * 1. POST /api/start       - 获取服务器权威 Seed 和 GameID
+ * 2. POST /api/score       - 提交游戏分数与操作序列，服务器进行重放验证
+ * 3. GET  /api/leaderboard - 获取排行榜数据
+ */
 int main() {
     GameManager game_manager;
 
     crow::App<crow::CORSHandler> app;
     auto& cors = app.get_middleware<crow::CORSHandler>();
+    // 全局 CORS 配置，允许所有来源跨域请求
     cors.global()
         .origin("*")
         .methods("POST"_method, "GET"_method, "OPTIONS"_method)
         .headers("Content-Type");
 
+    // ==========================================
+    // 路由 1: 开局请求
+    // ==========================================
     CROW_ROUTE(app, "/api/start").methods("POST"_method)([&game_manager](const crow::request& req) {
-        if (req.body.size() > 1024) {  // 开局请求不可能超过 1KB
+        // [防御] 限制开局请求体大小，正常开局请求不可能超过 1KB，防止内存消耗攻击
+        if (req.body.size() > 1024) {
             return crow::response(413, "Payload Too Large");
         }
+
         auto body = crow::json::load(req.body);
-        std::string mode = "classic";
+        std::string mode = "classic";  // 默认模式
+
+        // 解析并校验 mode 参数，非白名单内的非法参数强制回退为经典模式
         if (body && body.has("mode") && body["mode"].t() == crow::json::type::String) {
             mode = body["mode"].s();
             if (mode != "classic" && mode != "daily") {
@@ -36,15 +54,21 @@ int main() {
         return crow::response(res);
     });
 
+    // ==========================================
+    // 路由 2: 提交分数请求 (防作弊前置校验)
+    // ==========================================
     CROW_ROUTE(app, "/api/score").methods("POST"_method)([&game_manager](const crow::request& req) {
+        // [防御] 限制请求体大小，防止超大 Payload 导致内存溢出 (DoS)
         if (req.body.size() > 500 * 1024) {
             return crow::response(413, "Payload Too Large");
         }
-        auto body = crow::json::load(req.body);
-        if (!body)
-            return crow::response(400, "Invalid JSON");
 
-        // 【修复】严格的防御性字段校验
+        auto body = crow::json::load(req.body);
+        if (!body) {
+            return crow::response(400, "Invalid JSON");
+        }
+
+        // [校验 1] 严格防御性字段校验：确保必需字段存在且类型正确
         if (!body.has("gameId") || body["gameId"].t() != crow::json::type::String ||
             !body.has("name") || body["name"].t() != crow::json::type::String ||
             !body.has("score") || body["score"].t() != crow::json::type::Number ||
@@ -53,23 +77,28 @@ int main() {
         }
 
         std::string game_id = body["gameId"].s();
+        // [校验 2] 格式校验：GameID 必须是 16 位字符串 (快速阻止明显伪造的请求进入业务层)
         if (game_id.length() != 16) {
             return crow::response(400, "Invalid game ID");
         }
+
         std::string name = body["name"].s();
         int score = body["score"].i();
 
         std::vector<Action> actions;
+        // [校验 3] 深度校验每个 action 的结构与内容合法性
         for (auto& item : body["actions"]) {
-            // 【修复】确保每个 action 里的 tick 和 dir 也是合法的
             if (item.t() == crow::json::type::Object && item.has("tick") && item.has("dir")) {
                 if (item["tick"].t() != crow::json::type::Number ||
                     item["dir"].t() != crow::json::type::String) {
                     return crow::response(400, "Invalid action types");
                 }
+
                 Action act;
                 act.tick = item["tick"].i();
                 act.dir = item["dir"].s();
+
+                // 方向指令必须符合白名单
                 if (act.dir != "UP" && act.dir != "DOWN" && act.dir != "LEFT" &&
                     act.dir != "RIGHT") {
                     return crow::response(400, "Invalid direction");
@@ -80,7 +109,7 @@ int main() {
             }
         }
 
-        // 调后端校验
+        // 路由层校验全部通过，交由业务层 (GameManager) 进行权威重放与数据库写入
         if (game_manager.submit_score(game_id, name, score, actions)) {
             return crow::response(200, "Score submitted successfully");
         } else {
@@ -88,23 +117,25 @@ int main() {
         }
     });
 
+    // ==========================================
+    // 路由 3: 获取排行榜
+    // ==========================================
     CROW_ROUTE(app, "/api/leaderboard")
     ([&game_manager](const crow::request& req) {
         std::string mode = "classic";
+
+        // [校验] 解析 mode 参数，白名单机制防止恶意传参
         if (req.url_params.get("mode")) {
             mode = req.url_params.get("mode");
-            // 【核心修复】防止恶意传参，如果不是合法模式，直接强制回退到经典榜
             if (mode != "classic" && mode != "daily") {
                 mode = "classic";
             }
         }
 
-        // ... 下面的 limit 解析和 JSON 组装保持不变 ...
-
-        int limit = 10;
+        int limit = 10;  // 默认展示前 10 名
         if (req.url_params.get("limit")) {
             std::string limit_str = req.url_params.get("limit");
-            // 【优化】使用 C++17 std::from_chars，性能爆炸且不抛异常
+            // [性能] 使用 C++17 std::from_chars 进行无异常、零分配的高性能整型解析
             auto [ptr, ec] =
                 std::from_chars(limit_str.data(), limit_str.data() + limit_str.size(), limit);
             if (ec != std::errc()) {
@@ -117,7 +148,6 @@ int main() {
 
         result["data"] = crow::json::wvalue::list();
         for (size_t i = 0; i < top.size(); ++i) {
-            // 【终极修复】直接原地组装，彻底告别拷贝和移动的破事
             result["data"][i]["playerName"] = top[i].player_name;
             result["data"][i]["score"] = top[i].score;
         }
@@ -125,6 +155,7 @@ int main() {
         return crow::response(result);
     });
 
+    // 启动 HTTP 服务，监听 8080 端口，开启多线程模式
     app.port(8080).multithreaded().run();
     return 0;
 }

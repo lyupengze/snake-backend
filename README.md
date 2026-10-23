@@ -12,15 +12,16 @@
 
 - **🛡️ 服务器权威防作弊 (Anti-Cheat)**：
   - **绝对信任隔离**：游戏开局时，由服务器生成并下发权威的随机数种子（`seed`），并绑定在 `Session` 中。
-  - **时间悖论校验**：基于操作记录的最大 `tick` 计算出预期耗时。若物理耗时远小于预期耗时（如写脚本瞬间伪造 1000 帧操作），直接判定作弊并拦截。
+  - **时间悖论校验**：基于操作记录的最大 `tick` 计算出预期耗时。若物理耗时远小于预期耗时，直接判定作弊。
   - **状态重放引擎**：收到成绩时，忽略前端传入的任何状态，使用服务器下发的 `seed` 和前端上传的 `actions` 在 C++ 内存中极速重跑游戏。**计算分数不一致直接 403 踢飞**。
+  - **全链路拦截日志**：所有防作弊拦截（如伪造 ID、乱序 tick、分数不符等）均会输出详细的中文 `std::cerr` 日志，方便线上排查。
 - **⚡ 高并发与线程安全**：
   - **细粒度锁分离**：使用 `session_mtx_` 与 `db_mtx_` 分离锁，防止高频提交时的锁竞争。
   - **无锁重放**：在重放校验阶段提前释放 Session 锁，确保长时间的计算不阻塞其他玩家开局。
   - 开启 SQLite `WAL (Write-Ahead Logging)` 模式，实现真正的读写并发。
 - **🛡️ 极致的防御性编程**：
   - 使用 `sqlite3_prepare_v2` 与参数绑定，100% 杜绝 SQL 注入。
-  - 严格进行入参校验（字段类型、方向白名单、`name` 长度限制），防止 OOM 和非法数据。
+  - 严格进行入参校验（16位 GameID 校验、方向白名单、`name` 长度限制），防止 OOM 和非法数据。
   - 内置 TTL 会话清理机制，自动清理“开局即跑路”的废弃 `GameID`。
 - **🧩 模块化架构**：
   - `Controller` 层（`main.cpp`）负责路由与 JSON 解析。
@@ -35,19 +36,38 @@
 | `POST` | `/api/score`       | 提交分数，携带 `gameId`, `name`, `score`, `actions` 进行重放校验    |
 | `GET`  | `/api/leaderboard` | 获取排行榜（支持 `?mode=classic/daily` 双榜隔离与 `limit` 限制）    |
 
-## 🐳 生产环境部署 (Docker)
+## 🚀 部署与构建指南
 
-采用**多阶段构建**，构建阶段使用完整编译链，运行阶段极简剥离，镜像体积小且安全。
+### 1. 服务器一键部署 (推荐)
+
+项目根目录提供了一个 `deploy.sh` 自动化脚本。它会自动拉取前后端最新代码、重新编译并重启 Docker 容器。
 
 ```bash
-# 1. 构建镜像
-docker build -t snake-backend .
+# 在服务器上执行
+cd /root/snake-backend
+sudo ./deploy.sh
+```
 
-# 2. 启动容器并挂载数据卷 (极其重要，确保 SQLite 数据持久化)
-# 注意：线上使用的是 Docker named volume `snake_data_volume`，
-# 不是早期版本里的 bind mount `/root/snake_data`。两者不可混用。
+_(注意：该脚本会自动使用正确的 named volume `snake_data_volume` 并执行健康检查)_
+
+### 2. 本地开发环境编译 (Windows / MSYS2)
+
+依赖：`CMake`, `g++`, `sqlite3`, `asio`。
+
+```bash
+cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+./build/server.exe
+```
+
+### 3. 手动 Docker 部署
+
+采用**多阶段构建**，运行阶段极简剥离。
+
+```bash
+docker build -t snake-backend .
 docker run -d \
-  --name snake-backend \
+  --name my-snake \
   -p 127.0.0.1:8080:8080 \
   --restart always \
   -v snake_data_volume:/app/data \
@@ -56,5 +76,5 @@ docker run -d \
 
 ## 🧠 架构设计亮点
 
-1. **现代 C++17 特性**：使用 `std::mt19937` 替代 `rand()`，生成高质量随机种子；使用 `std::from_chars` 实现无异常的高性能数字解析；使用 `localtime_s/r` 解决跨平台时区线程安全问题。
+1. **现代 C++17 特性**：使用 `std::mt19937` 生成高质量随机种子；使用 `std::from_chars` 实现无异常的高性能数字解析；使用 `localtime_s/r` 解决跨平台时区线程安全问题。
 2. **跨日结算兼容**：在开局时固化 `Session.date`，即使玩家在 23:59 开局、00:01 提交，成绩依然精准落入昨日榜单。
