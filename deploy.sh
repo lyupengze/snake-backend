@@ -3,7 +3,7 @@
 # 项目一键自动化部署脚本 (Server-side)
 # 适用环境: Ubuntu / 生产环境纯部署节点
 # ==========================================
-set -e # 遇到任何错误立即退出，防止带病往下执行
+set -e # 遇到任何错误立即退出
 
 echo "Starting Snake deployment..."
 
@@ -13,9 +13,7 @@ echo "Starting Snake deployment..."
 echo "Updating Frontend..."
 cd /var/www/snake-frontend
 
-# [关键操作] 强制同步远端代码。
-# 因为服务器是纯部署环境，不应该有本地修改。使用 fetch + reset --hard
-# 可以彻底杜绝因换行符(CRLF/LF)或权限(chmod)变动导致的 git pull 冲突。
+# [关键操作] 强制同步远端代码，杜绝因换行符或权限变动导致的 git pull 冲突
 git fetch origin
 git reset --hard origin/main
 
@@ -30,31 +28,30 @@ echo "Frontend build completed."
 echo "Updating Backend..."
 cd /root/snake-backend
 
-# [关键操作] 记录同步前的 Commit Hash，用于后续比对
-BEFORE_PULL=$(git rev-parse HEAD)
-
-# 同样使用强制同步，保证代码绝对一致性
+# 强制同步远端代码
 git fetch origin
 git reset --hard origin/main
 
-# 记录同步后的 Commit Hash
-AFTER_PULL=$(git rev-parse HEAD)
+# [核心防呆设计] 计算 C++ 源码和构建配置的 MD5 指纹
+# 排除 .git 等无关文件，只算我们需要编译的文件
+CURRENT_HASH=$(find . -maxdepth 1 -type f \( -name "*.cpp" -o -name "*.h" -o -name "CMakeLists.txt" -o -name "Dockerfile" \) -exec md5sum {} + | sort | md5sum | awk '{print $1}')
 
-# [智能判断] 检查这段期间的变更文件中，是否包含后端源码或构建配置。
-# 正则解释：匹配以 .cpp/.h 结尾，或者是 CMakeLists.txt / Dockerfile 的文件
-CHANGED_FILES=$(git diff --name-only "$BEFORE_PULL" "$AFTER_PULL")
+# 从本地缓存文件读取上一次的指纹（如果不存在则为空）
+if [ -f .last_build_hash ]; then
+    LAST_HASH=$(cat .last_build_hash)
+else
+    LAST_HASH=""
+fi
 
-if echo "$CHANGED_FILES" | grep -E '\.(cpp|h)$|^CMakeLists\.txt$|^Dockerfile$' > /dev/null; then
-  # 如果匹配到了 C++ 文件或构建配置，则重新打 Docker 镜像
-  echo "Backend code changed (C++ source or build config modified), rebuilding Docker image..."
+# 比对指纹，决定是否需要构建
+if [ "$CURRENT_HASH" != "$LAST_HASH" ]; then
+  echo "Backend source code changed, rebuilding Docker image..."
   docker build -t snake-backend .
 
   echo "Restarting container..."
   docker stop my-snake || true
   docker rm my-snake || true
 
-  # [注意] 启动新容器
-  # 必须严格挂载 named volume (snake_data_volume)，否则线上数据会丢失
   docker run -d \
     --name my-snake \
     --restart always \
@@ -63,10 +60,11 @@ if echo "$CHANGED_FILES" | grep -E '\.(cpp|h)$|^CMakeLists\.txt$|^Dockerfile$' >
     -v snake_data_volume:/app/data \
     snake-backend
 
+  # 构建成功后，把当前指纹写入缓存文件，供下次比对
+  echo "$CURRENT_HASH" > .last_build_hash
   echo "Backend deployment completed."
 else
-  # 如果只是改了 README、脚本或其他无关文件，直接跳过 Docker 构建，秒级完成部署
-  echo "Backend code unchanged (only non-code files modified), skipping Docker build."
+  echo "Backend source code unchanged, skipping Docker build."
 fi
 
 
@@ -74,9 +72,7 @@ fi
 # 3. 部署后健康检查
 # ==========================================
 echo "Performing health check..."
-sleep 2 # 稍等 2 秒，给容器启动的时间
-
-# 尝试请求 API，如果成功则静默，否则输出错误提示
+sleep 2
 curl -s http://127.0.0.1/api/leaderboard > /dev/null && echo "API is healthy." || echo "API check failed, please inspect logs."
 
 echo "Deployment finished!"

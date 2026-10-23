@@ -7,6 +7,7 @@ build/
 *.obj
 CMakeFiles/
 CMakeCache.txt
+.last_build_hash
 
 # ==========================================
 # 第三方依赖源码（由 CMake FetchContent 自动拉取）
