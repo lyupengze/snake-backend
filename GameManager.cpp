@@ -106,8 +106,12 @@ bool GameManager::submit_score(const std::string& game_id, const std::string& na
                                const std::vector<Action>& actions) {
     if (name.empty() || name.length() > GameConfig::kMaxNameLength)
         return false;
-    if (actions.size() > 10000)
+
+    // 【修改 1】: 增加 actions 超限日志
+    if (actions.size() > 10000) {
+        std::cerr << "拦截: actions 数量超限 (" << actions.size() << ")" << std::endl;
         return false;  // 防DoS
+    }
 
     std::uint32_t real_seed = 0;
     std::string mode = "";
@@ -116,8 +120,11 @@ bool GameManager::submit_score(const std::string& game_id, const std::string& na
     {
         std::lock_guard<std::mutex> lock(session_mtx_);
         auto it = active_sessions_.find(game_id);
-        if (it == active_sessions_.end() || it->second.submitted)
+        if (it == active_sessions_.end() || it->second.submitted) {
+            // 【附加】: 增加 session 查找失败的日志
+            std::cerr << "拦截: session 不存在或已提交 (game_id=" << game_id << ")" << std::endl;
             return false;
+        }
 
         real_seed = it->second.seed;
         mode = it->second.mode;
@@ -138,7 +145,8 @@ bool GameManager::submit_score(const std::string& game_id, const std::string& na
         }
         // 2. 拒绝乱序或重复（时间不可倒流）
         if (act.tick <= last_tick) {
-            std::cerr << "作弊拦截: 检测到乱序或重复 tick" << std::endl;
+            std::cerr << "作弊拦截: 检测到乱序或重复 tick (当前=" << act.tick
+                      << ", 上一个=" << last_tick << ")" << std::endl;
             return false;
         }
         last_tick = act.tick;
@@ -151,7 +159,7 @@ bool GameManager::submit_score(const std::string& game_id, const std::string& na
 
     // 4. 安全兜底：限制最大帧数
     if (max_tick > 10000) {
-        std::cerr << "作弊拦截: 超过最大帧数限制" << std::endl;
+        std::cerr << "拦截: 超过最大帧数限制 (" << max_tick << ")" << std::endl;
         return false;
     }
 
@@ -160,21 +168,23 @@ bool GameManager::submit_score(const std::string& game_id, const std::string& na
     std::time_t now = std::time(nullptr);
     int actual_duration = static_cast<int>(std::difftime(now, session_created_at));
 
-    // 如果物理耗时远小于预期耗时（允许3秒网络延迟），说明是录播回放，直接拒绝
+    // 【修改 2】: 时间悖论加详细日志
     if (actual_duration < expected_duration - 3) {
-        std::cerr << "作弊拦截: 时间悖论! 声称操作了 " << max_tick << " 帧(约" << expected_duration
-                  << "秒)，但物理时间只过了 " << actual_duration << " 秒" << std::endl;
+        std::cerr << "作弊拦截: 时间悖论! 声称最大 tick: " << max_tick
+                  << "，要求物理耗时: " << expected_duration << "s，实际耗时: " << actual_duration
+                  << "s" << std::endl;
         return false;
     }
 
     // 核心：必须用 real_seed 跑重放
     int calc_score = ReplayEngine::run(real_seed, actions);
     if (calc_score < 0 || calc_score != score) {
-        std::cerr << "作弊拦截: 声称 " << score << " 分, 实际 " << calc_score << " 分" << std::endl;
+        // 【补充】: 增加分数字段对比日志
+        std::cerr << "作弊拦截: 声称 " << score << " 分, 实际重放 " << calc_score << " 分"
+                  << std::endl;
         return false;
     }
 
-    // ... 接下来的写数据库逻辑保持原样（用 session 里的 mode）...
     std::tm tm_now;
 #ifdef _WIN32
     localtime_s(&tm_now, &now);
@@ -191,8 +201,12 @@ bool GameManager::submit_score(const std::string& game_id, const std::string& na
         "excluded.timestamp "
         "WHERE excluded.score > scores.score;";
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK)
+
+    // 【修改 3】: 数据库错误加日志
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "数据库准备失败: " << sqlite3_errmsg(db_) << std::endl;
         return false;
+    }
     sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, mode.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 3, date_str.c_str(), -1, SQLITE_TRANSIENT);
@@ -200,6 +214,11 @@ bool GameManager::submit_score(const std::string& game_id, const std::string& na
     sqlite3_bind_int64(stmt, 5, now);
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
+
+    // 【修改 4】: 数据库执行结果检查
+    if (rc != SQLITE_DONE) {
+        std::cerr << "数据库写入失败: " << sqlite3_errmsg(db_) << " (rc=" << rc << ")" << std::endl;
+    }
     return rc == SQLITE_DONE;
 }
 
