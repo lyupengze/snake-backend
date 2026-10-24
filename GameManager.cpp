@@ -198,6 +198,11 @@ SubmitResult GameManager::submit_score(const std::string& game_id, const std::st
         return SubmitResult::Cheating;
     }
 
+    {
+        std::lock_guard<std::mutex> lock(session_mtx_);
+        active_sessions_.erase(game_id);
+    }
+
     std::tm tm_now;
 #ifdef _WIN32
     localtime_s(&tm_now, &now);

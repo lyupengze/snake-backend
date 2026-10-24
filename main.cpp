@@ -26,10 +26,21 @@ int main() {
         .methods("POST"_method, "GET"_method, "OPTIONS"_method)
         .headers("Content-Type");
 
+    CROW_ROUTE(app, "/<path>")
+        .methods("GET"_method, "POST"_method, "PUT"_method,
+                 "DELETE"_method)([](const crow::request&, std::string) {
+            return crow::response(404, "{\"error\": \"Route Not Found\"}");
+        });
+
     // ==========================================
     // 路由 1: 开局请求
     // ==========================================
     CROW_ROUTE(app, "/api/start").methods("POST"_method)([&game_manager](const crow::request& req) {
+        auto content_type = req.get_header_value("Content-Type");
+        if (content_type.find("application/json") == std::string::npos) {
+            return crow::response(415, "Unsupported Media Type");
+        }
+
         // [防御] 限制开局请求体大小，正常开局请求不可能超过 1KB，防止内存消耗攻击
         if (req.body.size() > 1024) {
             return crow::response(413, "Payload Too Large");
@@ -59,7 +70,11 @@ int main() {
     // 路由 2: 提交分数请求 (防作弊前置校验)
     // ==========================================
     CROW_ROUTE(app, "/api/score").methods("POST"_method)([&game_manager](const crow::request& req) {
-        // [防御] 限制请求体大小，防止超大 Payload 导致内存溢出 (DoS)
+        auto content_type = req.get_header_value("Content-Type");
+        if (content_type.find("application/json") == std::string::npos) {
+            return crow::response(415, "Unsupported Media Type");
+        }
+
         if (req.body.size() > 500 * 1024) {
             return crow::response(413, "Payload Too Large");
         }
@@ -78,7 +93,6 @@ int main() {
         }
 
         std::string game_id = body["gameId"].s();
-        // [校验 2] 格式校验：GameID 必须是 16 位字符串 (快速阻止明显伪造的请求进入业务层)
         if (game_id.length() != 16) {
             return crow::response(400, "Invalid game ID");
         }
@@ -112,9 +126,6 @@ int main() {
 
         // 路由层校验全部通过，交由业务层 (GameManager) 进行权威重放与数据库写入
         SubmitResult result = game_manager.submit_score(game_id, name, score, actions);
-
-        // [体验升级] 根据业务层的精确结果，返回对应的 HTTP 状态码
-        // 前端（GameView.vue）会根据这些状态码弹出不同的 Toast 提示
         switch (result) {
             case SubmitResult::Success:
                 return crow::response(200, "Score submitted successfully");
@@ -140,9 +151,9 @@ int main() {
         // [校验] 解析 mode 参数，白名单机制防止恶意传参
         if (req.url_params.get("mode")) {
             mode = req.url_params.get("mode");
-            // [修改] 放行 "wrap" 模式
+            // [安全修复 P3-3] 严格白名单，不再静默回退
             if (mode != "classic" && mode != "daily" && mode != "wrap") {
-                mode = "classic";
+                return crow::response(400, "Invalid mode");
             }
         }
 
