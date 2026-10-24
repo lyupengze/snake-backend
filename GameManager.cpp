@@ -198,11 +198,6 @@ SubmitResult GameManager::submit_score(const std::string& game_id, const std::st
         return SubmitResult::Cheating;
     }
 
-    {
-        std::lock_guard<std::mutex> lock(session_mtx_);
-        active_sessions_.erase(game_id);
-    }
-
     std::tm tm_now;
 #ifdef _WIN32
     localtime_s(&tm_now, &now);
@@ -238,6 +233,11 @@ SubmitResult GameManager::submit_score(const std::string& game_id, const std::st
     if (rc != SQLITE_DONE) {
         std::cerr << "数据库写入失败: " << sqlite3_errmsg(db_) << " (rc=" << rc << ")" << std::endl;
         return SubmitResult::InternalError;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(session_mtx_);
+        active_sessions_.erase(game_id);
     }
 
     return SubmitResult::Success;

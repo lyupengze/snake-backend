@@ -26,12 +26,6 @@ int main() {
         .methods("POST"_method, "GET"_method, "OPTIONS"_method)
         .headers("Content-Type");
 
-    CROW_ROUTE(app, "/<path>")
-        .methods("GET"_method, "POST"_method, "PUT"_method,
-                 "DELETE"_method)([](const crow::request&, std::string) {
-            return crow::response(404, "{\"error\": \"Route Not Found\"}");
-        });
-
     // ==========================================
     // 路由 1: 开局请求
     // ==========================================
@@ -179,6 +173,13 @@ int main() {
 
         return crow::response(result);
     });
+
+    // [安全修复 P2-2] 全局 404 兜底放必须在所有精确路由之后！
+    CROW_ROUTE(app, "/<path>")
+        .methods("GET"_method, "POST"_method, "PUT"_method,
+                 "DELETE"_method)([](const crow::request&, std::string) {
+            return crow::response(404, "{\"error\": \"Route Not Found\"}");
+        });
 
     // 启动 HTTP 服务，监听 8080 端口，开启多线程模式
     app.port(8080).multithreaded().run();
