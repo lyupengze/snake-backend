@@ -5,7 +5,6 @@
 
 #include "GameManager.h"
 #include "crow.h"
-#include "crow/middlewares/cors.h"
 
 /**
  * 贪吃蛇后端服务入口 (基于 Crow 框架)
@@ -18,13 +17,8 @@
 int main() {
     GameManager game_manager;
 
-    crow::App<crow::CORSHandler> app;
-    auto& cors = app.get_middleware<crow::CORSHandler>();
-    // 全局 CORS 配置，允许所有来源跨域请求
-    cors.global()
-        .origin("*")
-        .methods("POST"_method, "GET"_method, "OPTIONS"_method)
-        .headers("Content-Type");
+    // [安全修复 P2-1] 删除 CORSHandler 模板参数，使用纯原生 Crow::App
+    crow::App<> app;
 
     // ==========================================
     // 路由 1: 开局请求

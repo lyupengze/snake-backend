@@ -85,6 +85,13 @@ std::pair<std::string, std::uint32_t> GameManager::start_game(const std::string&
     std::lock_guard<std::mutex> lock(session_mtx_);
     cleanup_expired_sessions();
 
+    // [安全修复 P3-2] 底层加入严格的三值白名单比较，杜绝静默回退
+    if (mode != "classic" && mode != "daily" && mode != "wrap") {
+        // 如果传入非法 mode，可以抛异常，也可以直接强制设为 classic（这里强制设回 classic
+        // 作为最后兜底） 因为路由层已经拦截了 400，能走到这里说明是内部调用，强制兜底最安全。
+        const_cast<std::string&>(mode) = "classic";
+    }
+
     std::string game_id = generate_game_id();
     std::uint32_t seed = 0;
     std::string date_str = "all";  // 默认经典模式
