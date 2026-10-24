@@ -82,7 +82,8 @@ int main() {
 
         std::string game_id = body["gameId"].s();
         if (game_id.length() != 16) {
-            return crow::response(400, "Invalid game ID");
+            CROW_LOG_WARNING << "蓝队审计: 拦截非法 GameID 长度: " << game_id;
+            return crow::response(403, "Cheating detected or invalid session.");
         }
 
         std::string name = body["name"].s();
@@ -141,6 +142,7 @@ int main() {
             mode = req.url_params.get("mode");
             // [安全修复 P3-3] 严格白名单，不再静默回退
             if (mode != "classic" && mode != "daily" && mode != "wrap") {
+                CROW_LOG_WARNING << "蓝队审计: 拦截非法 mode: " << mode;
                 return crow::response(400, "Invalid mode");
             }
         }

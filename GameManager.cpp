@@ -235,11 +235,12 @@ SubmitResult GameManager::submit_score(const std::string& game_id, const std::st
         return SubmitResult::InternalError;
     }
 
+    // [安全修复 P3] 只有数据库写入成功后，才销毁
+    // Session，避免因写库失败导致玩家白白丢失一次提交机会
     {
         std::lock_guard<std::mutex> lock(session_mtx_);
         active_sessions_.erase(game_id);
     }
-
     return SubmitResult::Success;
 }
 
