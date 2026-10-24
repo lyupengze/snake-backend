@@ -41,7 +41,8 @@ int main() {
         // 解析并校验 mode 参数，非白名单内的非法参数强制回退为经典模式
         if (body && body.has("mode") && body["mode"].t() == crow::json::type::String) {
             mode = body["mode"].s();
-            if (mode != "classic" && mode != "daily") {
+            // [修改] 放行 "wrap" 模式
+            if (mode != "classic" && mode != "daily" && mode != "wrap") {
                 mode = "classic";
             }
         }
@@ -139,7 +140,8 @@ int main() {
         // [校验] 解析 mode 参数，白名单机制防止恶意传参
         if (req.url_params.get("mode")) {
             mode = req.url_params.get("mode");
-            if (mode != "classic" && mode != "daily") {
+            // [修改] 放行 "wrap" 模式
+            if (mode != "classic" && mode != "daily" && mode != "wrap") {
                 mode = "classic";
             }
         }

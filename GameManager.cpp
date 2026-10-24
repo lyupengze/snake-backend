@@ -188,9 +188,11 @@ SubmitResult GameManager::submit_score(const std::string& game_id, const std::st
         return SubmitResult::Cheating;
     }
 
-    // [校验 7] 核心防御：服务器使用 real_seed 重放玩家操作
-    int calc_score = ReplayEngine::run(real_seed, actions);
+    // [校验 7] 核心防御：服务器使用 real_seed 重放玩家操作，计算真实分数
+    // [修改] 将 mode 参数传递进去
+    int calc_score = ReplayEngine::run(real_seed, actions, mode);
     if (calc_score < 0 || calc_score != score) {
+        // ... 后续逻辑不变
         std::cerr << "作弊拦截: 声称 " << score << " 分, 实际重放 " << calc_score << " 分"
                   << std::endl;
         return SubmitResult::Cheating;

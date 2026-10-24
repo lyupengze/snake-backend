@@ -23,7 +23,9 @@ public:
      *
      * @param seed 开局时服务器下发的权威随机种子
      * @param actions 玩家提交的操作序列
+     * @param mode 游戏模式 ("classic", "daily", "wrap")
      * @return int 服务器计算出的真实分数；若检测到异常（如超长重放攻击）返回 -1
      */
-    static int run(uint32_t seed, const std::vector<Action>& actions);
+    static int run(uint32_t seed, const std::vector<Action>& actions,
+                   const std::string& mode = "classic");
 };
