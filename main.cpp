@@ -37,12 +37,12 @@ int main() {
         auto body = crow::json::load(req.body);
         std::string mode = "classic";  // 默认模式
 
-        // 解析并校验 mode 参数，非白名单内的非法参数强制回退为经典模式
+        // 解析并校验 mode 参数，非白名单内的非法参数直接拒绝
         if (body && body.has("mode") && body["mode"].t() == crow::json::type::String) {
             mode = body["mode"].s();
-            // [修改] 放行 "wrap" 模式
+            // [安全修复 P3-2] 严格白名单拦截，绝不静默回退！
             if (mode != "classic" && mode != "daily" && mode != "wrap") {
-                mode = "classic";
+                return crow::response(400, "Invalid mode");
             }
         }
 
