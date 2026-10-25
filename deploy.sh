@@ -17,6 +17,10 @@ cd /var/www/snake-frontend
 git fetch origin
 git reset --hard origin/main
 
+# [新增] 自动同步依赖包，防止本地加了新插件服务器构建报错
+echo "Syncing frontend dependencies..."
+npm install
+
 # 执行 Vite 构建，生成最新的 dist 静态资源
 npm run build
 echo "Frontend build completed."
