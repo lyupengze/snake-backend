@@ -54,6 +54,13 @@ int main() {
     // 路由 1: 开局请求
     // ==========================================
     CROW_ROUTE(app, "/api/start").methods("POST"_method)([&game_manager](const crow::request& req) {
+        // [纵深防御] 强制验证请求必须来自本地 Nginx 代理
+        // 如果未来 Docker 配置被误改为 0.0.0.0，此段代码能直接阻断攻击者直连
+        if (req.remote_ip_address != "127.0.0.1") {
+            CROW_LOG_WARNING << "蓝队审计: 拦截未授权直连后端 (来源IP: " << req.remote_ip_address
+                             << ")";
+            return crow::response(403, "Forbidden: Direct access not allowed");
+        }
         // 优先从 Nginx 传来的 Header 获取真实 IP
         std::string client_ip = req.get_header_value("X-Real-IP");
         if (client_ip.empty()) {
@@ -111,6 +118,13 @@ int main() {
     // 路由 2: 提交分数请求 (防作弊前置校验)
     // ==========================================
     CROW_ROUTE(app, "/api/score").methods("POST"_method)([&game_manager](const crow::request& req) {
+        // [纵深防御] 强制验证请求必须来自本地 Nginx 代理
+        // 如果未来 Docker 配置被误改为 0.0.0.0，此段代码能直接阻断攻击者直连
+        if (req.remote_ip_address != "127.0.0.1") {
+            CROW_LOG_WARNING << "蓝队审计: 拦截未授权直连后端 (来源IP: " << req.remote_ip_address
+                             << ")";
+            return crow::response(403, "Forbidden: Direct access not allowed");
+        }
         // 优先从 Nginx 传来的 Header 获取真实 IP
         std::string client_ip = req.get_header_value("X-Real-IP");
         if (client_ip.empty()) {
