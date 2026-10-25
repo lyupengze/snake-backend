@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <charconv>
 #include <chrono>
+#include <cstdlib>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -19,6 +20,13 @@
  */
 
 // 极简内存限流，防单 IP 高频刷分
+
+// 从环境变量读取内部密钥，防止绕过 Nginx 直连
+static const std::string INTERNAL_SECRET = []() {
+    const char* s = std::getenv("INTERNAL_SECRET");
+    return s ? std::string(s) : std::string();
+}();
+
 struct RateLimiter {
     std::unordered_map<std::string, std::pair<int, std::chrono::steady_clock::time_point>> ips;
     std::mutex mtx;
@@ -54,9 +62,10 @@ int main() {
     // 路由 1: 开局请求
     // ==========================================
     CROW_ROUTE(app, "/api/start").methods("POST"_method)([&game_manager](const crow::request& req) {
-        // [纵深防御] 强制验证请求必须来自本地 Nginx 代理
-        // 如果未来 Docker 配置被误改为 0.0.0.0，此段代码能直接阻断攻击者直连
-        if (req.remote_ip_address != "127.0.0.1") {
+        // 校验内部密钥，拦截未经 Nginx 的直连请求
+        // 因为 Docker 下 Nginx 的 IP 是 172.17.0.1，不能校验 127.0.0.1
+        if (INTERNAL_SECRET.empty() ||
+            req.get_header_value("X-Internal-Secret") != INTERNAL_SECRET) {
             CROW_LOG_WARNING << "蓝队审计: 拦截未授权直连后端 (来源IP: " << req.remote_ip_address
                              << ")";
             return crow::response(403, "Forbidden: Direct access not allowed");
@@ -118,9 +127,10 @@ int main() {
     // 路由 2: 提交分数请求 (防作弊前置校验)
     // ==========================================
     CROW_ROUTE(app, "/api/score").methods("POST"_method)([&game_manager](const crow::request& req) {
-        // [纵深防御] 强制验证请求必须来自本地 Nginx 代理
-        // 如果未来 Docker 配置被误改为 0.0.0.0，此段代码能直接阻断攻击者直连
-        if (req.remote_ip_address != "127.0.0.1") {
+        // 校验内部密钥，拦截未经 Nginx 的直连请求
+        // 因为 Docker 下 Nginx 的 IP 是 172.17.0.1，不能校验 127.0.0.1
+        if (INTERNAL_SECRET.empty() ||
+            req.get_header_value("X-Internal-Secret") != INTERNAL_SECRET) {
             CROW_LOG_WARNING << "蓝队审计: 拦截未授权直连后端 (来源IP: " << req.remote_ip_address
                              << ")";
             return crow::response(403, "Forbidden: Direct access not allowed");
