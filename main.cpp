@@ -54,8 +54,12 @@ int main() {
     // 路由 1: 开局请求
     // ==========================================
     CROW_ROUTE(app, "/api/start").methods("POST"_method)([&game_manager](const crow::request& req) {
-        // 获取客户端 IP (Crow 默认 req.remote_ip_address)
-        std::string client_ip = req.remote_ip_address;
+        // 优先从 Nginx 传来的 Header 获取真实 IP
+        std::string client_ip = req.get_header_value("X-Real-IP");
+        if (client_ip.empty()) {
+            client_ip = req.remote_ip_address;  // 兜底
+        }
+
         if (!rate_limiter.is_allowed(client_ip)) {
             return crow::response(429, "Too Many Requests (Crow Layer)");
         }
@@ -107,8 +111,12 @@ int main() {
     // 路由 2: 提交分数请求 (防作弊前置校验)
     // ==========================================
     CROW_ROUTE(app, "/api/score").methods("POST"_method)([&game_manager](const crow::request& req) {
-        // 获取客户端 IP (Crow 默认 req.remote_ip_address)
-        std::string client_ip = req.remote_ip_address;
+        // 优先从 Nginx 传来的 Header 获取真实 IP
+        std::string client_ip = req.get_header_value("X-Real-IP");
+        if (client_ip.empty()) {
+            client_ip = req.remote_ip_address;  // 兜底
+        }
+
         if (!rate_limiter.is_allowed(client_ip)) {
             return crow::response(429, "Too Many Requests (Crow Layer)");
         }
@@ -261,8 +269,7 @@ int main() {
             return crow::response(404, "{\"error\": \"Route Not Found\"}");
         });
 
-    // 启动 HTTP 服务，监听 8080 端口，开启多线程模式
-    // 仅绑定 127.0.0.1，防止局域网内其他设备直接绕过 Nginx 访问后端
-    app.bindaddr("127.0.0.1").port(8080).multithreaded().run();
+    // 容器内部必须监听 0.0.0.0，外部局域网暴露由 Docker 的 -p 127.0.0.1 限制
+    app.bindaddr("0.0.0.0").port(8080).multithreaded().run();
     return 0;
 }
