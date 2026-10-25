@@ -57,6 +57,7 @@ if [ "$CURRENT_HASH" != "$LAST_HASH" ]; then
     --restart always \
     -p 127.0.0.1:8080:8080 \
     -e TZ=Asia/Shanghai \
+    -e INTERNAL_SECRET="${INTERNAL_SECRET}" \
     -v snake_data_volume:/app/data \
     snake-backend
 
