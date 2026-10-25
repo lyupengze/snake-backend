@@ -1,6 +1,9 @@
 #include <algorithm>
 #include <charconv>
+#include <chrono>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "GameManager.h"
@@ -14,6 +17,33 @@
  * 2. POST /api/score       - 提交游戏分数与操作序列，服务器进行重放验证
  * 3. GET  /api/leaderboard - 获取排行榜数据
  */
+
+// 极简内存限流，防单 IP 高频刷分
+struct RateLimiter {
+    std::unordered_map<std::string, std::pair<int, std::chrono::steady_clock::time_point>> ips;
+    std::mutex mtx;
+
+    bool is_allowed(const std::string& ip) {
+        std::lock_guard<std::mutex> lock(mtx);
+        auto now = std::chrono::steady_clock::now();
+        auto& rec = ips[ip];
+
+        // 如果超过 60 秒，重置计数
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - rec.second).count() > 60) {
+            rec.first = 1;
+            rec.second = now;
+            return true;
+        }
+
+        // 每分钟限制 30 次
+        if (rec.first >= 30)
+            return false;
+        rec.first++;
+        return true;
+    }
+};
+RateLimiter rate_limiter;
+
 int main() {
     GameManager game_manager;
 
@@ -24,6 +54,12 @@ int main() {
     // 路由 1: 开局请求
     // ==========================================
     CROW_ROUTE(app, "/api/start").methods("POST"_method)([&game_manager](const crow::request& req) {
+        // 获取客户端 IP (Crow 默认 req.remote_ip_address)
+        std::string client_ip = req.remote_ip_address;
+        if (!rate_limiter.is_allowed(client_ip)) {
+            return crow::response(429, "Too Many Requests (Crow Layer)");
+        }
+
         auto content_type = req.get_header_value("Content-Type");
         if (content_type.find("application/json") == std::string::npos) {
             return crow::response(415, "Unsupported Media Type");
@@ -35,14 +71,27 @@ int main() {
         }
 
         auto body = crow::json::load(req.body);
+
+        // 严格校验 JSON 格式，解析失败直接打回，绝不静默放行
+        if (!body) {
+            return crow::response(400, "Invalid JSON format");
+        }
+
         std::string mode = "classic";  // 默认模式
 
-        // 解析并校验 mode 参数，非白名单内的非法参数直接拒绝
-        if (body && body.has("mode") && body["mode"].t() == crow::json::type::String) {
-            mode = body["mode"].s();
-            // [安全修复 P3-2] 严格白名单拦截，绝不静默回退！
-            if (mode != "classic" && mode != "daily" && mode != "wrap") {
-                return crow::response(400, "Invalid mode");
+        if (body) {
+            // 只要包含了 mode 字段，就必须严格校验
+            if (body.has("mode")) {
+                // 1. 必须且只能是 String 类型
+                if (body["mode"].t() != crow::json::type::String) {
+                    return crow::response(400, "Invalid mode type");
+                }
+                mode = body["mode"].s();
+
+                // 2. 严格白名单拦截，绝不静默回退
+                if (mode != "classic" && mode != "daily" && mode != "wrap") {
+                    return crow::response(400, "Invalid mode");
+                }
             }
         }
 
@@ -58,6 +107,12 @@ int main() {
     // 路由 2: 提交分数请求 (防作弊前置校验)
     // ==========================================
     CROW_ROUTE(app, "/api/score").methods("POST"_method)([&game_manager](const crow::request& req) {
+        // 获取客户端 IP (Crow 默认 req.remote_ip_address)
+        std::string client_ip = req.remote_ip_address;
+        if (!rate_limiter.is_allowed(client_ip)) {
+            return crow::response(429, "Too Many Requests (Crow Layer)");
+        }
+
         auto content_type = req.get_header_value("Content-Type");
         if (content_type.find("application/json") == std::string::npos) {
             return crow::response(415, "Unsupported Media Type");
@@ -87,6 +142,31 @@ int main() {
         }
 
         std::string name = body["name"].s();
+
+        // 1. 先过滤掉玩家手滑输入的前后空格，防止分数分家
+        if (!name.empty() && name.front() == ' ') {
+            name.erase(0, name.find_first_not_of(' '));
+        }
+        if (!name.empty() && name.back() == ' ') {
+            name.erase(name.find_last_not_of(' ') + 1);
+        }
+
+        // 2. 精确的长度与空值校验
+        if (name.empty() || name.length() > GameConfig::kMaxNameLength) {
+            return crow::response(400, "Name too long or empty");
+        }
+
+        // 彻底放弃 std::isalnum（受 Locale 影响不稳定）
+        // 改用纯 ASCII 手动判断 + 直接放行所有 UTF-8 中文字节 (c >= 0x80)
+        for (unsigned char c : name) {
+            bool is_ascii_alnum =
+                (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+
+            if (!(is_ascii_alnum || c == '_' || c == '-' || c >= 0x80)) {
+                return crow::response(400, "Invalid character in name");
+            }
+        }
+
         int score = body["score"].i();
 
         std::vector<Action> actions;
@@ -140,11 +220,15 @@ int main() {
         // [校验] 解析 mode 参数，白名单机制防止恶意传参
         if (req.url_params.get("mode")) {
             mode = req.url_params.get("mode");
-            // [安全修复 P3-3] 严格白名单，不再静默回退
+
+            // 严格白名单，不再静默回退
             if (mode != "classic" && mode != "daily" && mode != "wrap") {
                 CROW_LOG_WARNING << "蓝队审计: 拦截非法 mode: " << mode;
                 return crow::response(400, "Invalid mode");
             }
+        } else {
+            // 缺失 mode 参数时，不再静默使用默认值，而是直接拒绝
+            return crow::response(400, "Missing mode parameter");
         }
 
         int limit = 10;  // 默认展示前 10 名
@@ -178,6 +262,7 @@ int main() {
         });
 
     // 启动 HTTP 服务，监听 8080 端口，开启多线程模式
-    app.port(8080).multithreaded().run();
+    // 仅绑定 127.0.0.1，防止局域网内其他设备直接绕过 Nginx 访问后端
+    app.bindaddr("127.0.0.1").port(8080).multithreaded().run();
     return 0;
 }

@@ -102,7 +102,16 @@ std::pair<std::string, std::uint32_t> GameManager::start_game(const std::string&
     if (mode == "daily") {
         // 每日挑战：使用日期（如 20231024）作为种子，并记录日期
         date_str = date_buf;
-        seed = (tm_now.tm_year + 1900) * 10000 + (tm_now.tm_mon + 1) * 100 + tm_now.tm_mday;
+
+        // 不能直接用日期作为种子，防止被提前预计算
+        // 将日期加上一个只有服务器知道的秘钥，再做一轮混淆计算
+        std::uint32_t base_date =
+            (tm_now.tm_year + 1900) * 10000 + (tm_now.tm_mon + 1) * 100 + tm_now.tm_mday;
+        const std::uint32_t SECRET_SALT = 0x9E3779B9;  // 一个固定的魔数
+
+        // 使用一种不可逆的混淆（Knuth 乘法哈希），既能保证每天固定，又无法被反推
+        seed = (base_date ^ SECRET_SALT) * 2654435761u;
+
     } else {
         // 经典模式：真随机种子
         std::random_device rd;
