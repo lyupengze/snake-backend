@@ -3,29 +3,15 @@
 #include <string>
 #include <vector>
 
-/**
- * 玩家操作记录，用于后端重放验证
- */
 struct Action {
-    int tick;         // 该操作发生的游戏帧数 (从 0 开始)
-    std::string dir;  // 移动方向 ("UP", "DOWN", "LEFT", "RIGHT")
+    int tick;
+    std::string dir;
 };
 
-/**
- * 服务器权威重放引擎
- *
- * 负责根据前端提交的操作序列，在服务器端完整模拟游戏过程，以此验证玩家分数的真实性。
- */
+// 服务端回放引擎：用权威种子 + 客户端操作序列重演整局游戏。
+// 返回验证后的得分；若 tick 数超限则返回 -1（防止恶意构造超长回放）。
 class ReplayEngine {
 public:
-    /**
-     * 执行游戏重放
-     *
-     * @param seed 开局时服务器下发的权威随机种子
-     * @param actions 玩家提交的操作序列
-     * @param mode 游戏模式 ("classic", "daily", "wrap")
-     * @return int 服务器计算出的真实分数；若检测到异常（如超长重放攻击）返回 -1
-     */
     static int run(uint32_t seed, const std::vector<Action>& actions,
                    const std::string& mode = "classic");
 };

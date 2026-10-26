@@ -10,18 +10,11 @@
 #include "GameManager.h"
 #include "crow.h"
 
-/**
- * 贪吃蛇后端服务入口 (基于 Crow 框架)
- *
- * 负责提供以下核心 API:
- * 1. POST /api/start       - 获取服务器权威 Seed 和 GameID
- * 2. POST /api/score       - 提交游戏分数与操作序列，服务器进行重放验证
- * 3. GET  /api/leaderboard - 获取排行榜数据
- */
+// API 路由：
+//   POST /api/start       — 创建游戏会话，返回 gameId + 权威种子
+//   POST /api/score       — 提交分数，附带操作回放供反作弊校验
+//   GET  /api/leaderboard — 按模式查询排行榜
 
-// 极简内存限流，防单 IP 高频刷分
-
-// 从环境变量读取内部密钥，防止绕过 Nginx 直连
 static const std::string INTERNAL_SECRET = []() {
     const char* s = std::getenv("INTERNAL_SECRET");
     return s ? std::string(s) : std::string();
@@ -36,14 +29,12 @@ struct RateLimiter {
         auto now = std::chrono::steady_clock::now();
         auto& rec = ips[ip];
 
-        // 如果超过 60 秒，重置计数
         if (std::chrono::duration_cast<std::chrono::seconds>(now - rec.second).count() > 60) {
             rec.first = 1;
             rec.second = now;
             return true;
         }
 
-        // 每分钟限制 30 次
         if (rec.first >= 30)
             return false;
         rec.first++;
@@ -54,26 +45,19 @@ RateLimiter rate_limiter;
 
 int main() {
     GameManager game_manager;
-
-    // [安全修复 P2-1] 删除 CORSHandler 模板参数，使用纯原生 Crow::App
     crow::App<> app;
 
-    // ==========================================
-    // 路由 1: 开局请求
-    // ==========================================
     CROW_ROUTE(app, "/api/start").methods("POST"_method)([&game_manager](const crow::request& req) {
-        // 校验内部密钥，拦截未经 Nginx 的直连请求
-        // 因为 Docker 下 Nginx 的 IP 是 172.17.0.1，不能校验 127.0.0.1
         if (INTERNAL_SECRET.empty() ||
             req.get_header_value("X-Internal-Secret") != INTERNAL_SECRET) {
-            CROW_LOG_WARNING << "蓝队审计: 拦截未授权直连后端 (来源IP: " << req.remote_ip_address
-                             << ")";
+            CROW_LOG_WARNING << "Blocked unauthorized direct access (IP: "
+                             << req.remote_ip_address << ")";
             return crow::response(403, "Forbidden: Direct access not allowed");
         }
-        // 优先从 Nginx 传来的 Header 获取真实 IP
+
         std::string client_ip = req.get_header_value("X-Real-IP");
         if (client_ip.empty()) {
-            client_ip = req.remote_ip_address;  // 兜底
+            client_ip = req.remote_ip_address;
         }
 
         if (!rate_limiter.is_allowed(client_ip)) {
@@ -85,33 +69,23 @@ int main() {
             return crow::response(415, "Unsupported Media Type");
         }
 
-        // [防御] 限制开局请求体大小，正常开局请求不可能超过 1KB，防止内存消耗攻击
         if (req.body.size() > 1024) {
             return crow::response(413, "Payload Too Large");
         }
 
         auto body = crow::json::load(req.body);
-
-        // 严格校验 JSON 格式，解析失败直接打回，绝不静默放行
         if (!body) {
             return crow::response(400, "Invalid JSON format");
         }
 
-        std::string mode = "classic";  // 默认模式
-
-        if (body) {
-            // 只要包含了 mode 字段，就必须严格校验
-            if (body.has("mode")) {
-                // 1. 必须且只能是 String 类型
-                if (body["mode"].t() != crow::json::type::String) {
-                    return crow::response(400, "Invalid mode type");
-                }
-                mode = body["mode"].s();
-
-                // 2. 严格白名单拦截，绝不静默回退
-                if (mode != "classic" && mode != "daily" && mode != "wrap") {
-                    return crow::response(400, "Invalid mode");
-                }
+        std::string mode = "classic";
+        if (body.has("mode")) {
+            if (body["mode"].t() != crow::json::type::String) {
+                return crow::response(400, "Invalid mode type");
+            }
+            mode = body["mode"].s();
+            if (mode != "classic" && mode != "daily" && mode != "wrap") {
+                return crow::response(400, "Invalid mode");
             }
         }
 
@@ -123,22 +97,17 @@ int main() {
         return crow::response(res);
     });
 
-    // ==========================================
-    // 路由 2: 提交分数请求 (防作弊前置校验)
-    // ==========================================
     CROW_ROUTE(app, "/api/score").methods("POST"_method)([&game_manager](const crow::request& req) {
-        // 校验内部密钥，拦截未经 Nginx 的直连请求
-        // 因为 Docker 下 Nginx 的 IP 是 172.17.0.1，不能校验 127.0.0.1
         if (INTERNAL_SECRET.empty() ||
             req.get_header_value("X-Internal-Secret") != INTERNAL_SECRET) {
-            CROW_LOG_WARNING << "蓝队审计: 拦截未授权直连后端 (来源IP: " << req.remote_ip_address
-                             << ")";
+            CROW_LOG_WARNING << "Blocked unauthorized direct access (IP: "
+                             << req.remote_ip_address << ")";
             return crow::response(403, "Forbidden: Direct access not allowed");
         }
-        // 优先从 Nginx 传来的 Header 获取真实 IP
+
         std::string client_ip = req.get_header_value("X-Real-IP");
         if (client_ip.empty()) {
-            client_ip = req.remote_ip_address;  // 兜底
+            client_ip = req.remote_ip_address;
         }
 
         if (!rate_limiter.is_allowed(client_ip)) {
@@ -159,7 +128,6 @@ int main() {
             return crow::response(400, "Invalid JSON");
         }
 
-        // [校验 1] 严格防御性字段校验：确保必需字段存在且类型正确
         if (!body.has("gameId") || body["gameId"].t() != crow::json::type::String ||
             !body.has("name") || body["name"].t() != crow::json::type::String ||
             !body.has("score") || body["score"].t() != crow::json::type::Number ||
@@ -169,13 +137,12 @@ int main() {
 
         std::string game_id = body["gameId"].s();
         if (game_id.length() != 16) {
-            CROW_LOG_WARNING << "蓝队审计: 拦截非法 GameID 长度: " << game_id;
+            CROW_LOG_WARNING << "Blocked invalid GameID length: " << game_id;
             return crow::response(403, "Cheating detected or invalid session.");
         }
 
         std::string name = body["name"].s();
 
-        // 1. 先过滤掉玩家手滑输入的前后空格，防止分数分家
         if (!name.empty() && name.front() == ' ') {
             name.erase(0, name.find_first_not_of(' '));
         }
@@ -183,17 +150,15 @@ int main() {
             name.erase(name.find_last_not_of(' ') + 1);
         }
 
-        // 2. 精确的长度与空值校验
         if (name.empty() || name.length() > GameConfig::kMaxNameLength) {
             return crow::response(400, "Name too long or empty");
         }
 
-        // 彻底放弃 std::isalnum（受 Locale 影响不稳定）
-        // 改用纯 ASCII 手动判断 + 直接放行所有 UTF-8 中文字节 (c >= 0x80)
+        // 纯 ASCII 字母数字检查 + 允许 UTF-8 续字节（>= 0x80）以支持中日韩字符。
+        // 避免使用依赖 locale 的 std::isalnum。
         for (unsigned char c : name) {
             bool is_ascii_alnum =
                 (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
-
             if (!(is_ascii_alnum || c == '_' || c == '-' || c >= 0x80)) {
                 return crow::response(400, "Invalid character in name");
             }
@@ -202,19 +167,15 @@ int main() {
         int score = body["score"].i();
 
         std::vector<Action> actions;
-        // [校验 3] 深度校验每个 action 的结构与内容合法性
         for (auto& item : body["actions"]) {
             if (item.t() == crow::json::type::Object && item.has("tick") && item.has("dir")) {
                 if (item["tick"].t() != crow::json::type::Number ||
                     item["dir"].t() != crow::json::type::String) {
                     return crow::response(400, "Invalid action types");
                 }
-
                 Action act;
                 act.tick = item["tick"].i();
                 act.dir = item["dir"].s();
-
-                // 方向指令必须符合白名单
                 if (act.dir != "UP" && act.dir != "DOWN" && act.dir != "LEFT" &&
                     act.dir != "RIGHT") {
                     return crow::response(400, "Invalid direction");
@@ -225,7 +186,6 @@ int main() {
             }
         }
 
-        // 路由层校验全部通过，交由业务层 (GameManager) 进行权威重放与数据库写入
         SubmitResult result = game_manager.submit_score(game_id, name, score, actions);
         switch (result) {
             case SubmitResult::Success:
@@ -242,35 +202,27 @@ int main() {
         }
     });
 
-    // ==========================================
-    // 路由 3: 获取排行榜
-    // ==========================================
     CROW_ROUTE(app, "/api/leaderboard")
     ([&game_manager](const crow::request& req) {
         std::string mode = "classic";
 
-        // [校验] 解析 mode 参数，白名单机制防止恶意传参
         if (req.url_params.get("mode")) {
             mode = req.url_params.get("mode");
-
-            // 严格白名单，不再静默回退
             if (mode != "classic" && mode != "daily" && mode != "wrap") {
-                CROW_LOG_WARNING << "蓝队审计: 拦截非法 mode: " << mode;
+                CROW_LOG_WARNING << "Blocked invalid mode: " << mode;
                 return crow::response(400, "Invalid mode");
             }
         } else {
-            // 缺失 mode 参数时，不再静默使用默认值，而是直接拒绝
             return crow::response(400, "Missing mode parameter");
         }
 
-        int limit = 10;  // 默认展示前 10 名
+        int limit = 10;
         if (req.url_params.get("limit")) {
             std::string limit_str = req.url_params.get("limit");
-            // [性能] 使用 C++17 std::from_chars 进行无异常、零分配的高性能整型解析
             auto [ptr, ec] =
                 std::from_chars(limit_str.data(), limit_str.data() + limit_str.size(), limit);
             if (ec != std::errc()) {
-                limit = 10;  // 解析失败退回默认值
+                limit = 10;
             }
         }
 
@@ -286,14 +238,13 @@ int main() {
         return crow::response(result);
     });
 
-    // [安全修复 P2-2] 全局 404 兜底放必须在所有精确路由之后！
+    // 兜底 404 — 必须在所有具体路由之后注册。
     CROW_ROUTE(app, "/<path>")
         .methods("GET"_method, "POST"_method, "PUT"_method,
                  "DELETE"_method)([](const crow::request&, std::string) {
             return crow::response(404, "{\"error\": \"Route Not Found\"}");
         });
 
-    // 容器内部必须监听 0.0.0.0，外部局域网暴露由 Docker 的 -p 127.0.0.1 限制
     app.bindaddr("0.0.0.0").port(8080).multithreaded().run();
     return 0;
 }
