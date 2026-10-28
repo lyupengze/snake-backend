@@ -1,0 +1,40 @@
+# Workflow 名称
+name: CI Backend
+
+# 触发条件
+on:
+  push:
+    branches: [main]
+    # 只有 C++ 源码、构建配置、Dockerfile 变动才触发
+    paths:
+      - '**.cpp'                # C++ 源文件
+      - '**.h'                  # C++ 头文件
+      - 'CMakeLists.txt'        # CMake 构建配置
+      - 'Dockerfile'            # Docker 构建文件（验证能否正常构建）
+      - '.github/workflows/ci-backend.yml'  # 改 CI 配置本身也要验证
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 第一步：拉取代码
+      - uses: actions/checkout@v4
+
+      # 第二步：安装系统依赖
+      # libasio-dev — Crow 框架的异步网络库
+      # libsqlite3-dev — 数据库
+      # 注意：Crow 本身通过 CMake FetchContent 自动下载，不需要手动装
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasio-dev libsqlite3-dev
+
+      # 第三步：CMake 配置（生成 Makefile）
+      - name: Configure
+        run: mkdir build && cd build && cmake ..
+
+      # 第四步：编译
+      # $(nproc) 获取 CPU 核心数，并行编译加速
+      - name: Build
+        run: cd build && make -j$(nproc)

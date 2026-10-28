@@ -13,7 +13,7 @@ git fetch origin
 git reset --hard origin/main
 
 echo "Syncing frontend dependencies..."
-npm install
+npm ci
 npm run build
 echo "Frontend build completed."
 

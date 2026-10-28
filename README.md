@@ -21,11 +21,11 @@ C++17 贪吃蛇游戏后端服务，基于 Crow 框架，内置服务器权威�
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/start` | 创建游戏会话，返回 `gameId` + 权威 `seed` |
-| POST | `/api/score` | 提交分数，携带操作序列进行重放验证 |
+| POST | `/api/start` | 创建游戏会话，返回 `gameId` + 权威 `seed`（需密钥校验） |
+| POST | `/api/score` | 提交分数，携带操作序列进行重放验证（需密钥校验） |
 | GET | `/api/leaderboard` | 查询排行榜（`?mode=classic/daily/wrap&limit=N`） |
 
-所有接口需通过 `X-Internal-Secret` 头校验，拦截绕过 Nginx 的直连请求。
+写接口（`/api/start`、`/api/score`）需通过 `X-Internal-Secret` 头校验，拦截绕过 Nginx 的直连请求。排行榜为公开读接口，无需密钥。
 
 ## 项目结构
 
