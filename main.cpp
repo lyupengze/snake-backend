@@ -58,7 +58,8 @@ struct RateLimiter {
         return true;
     }
 };
-RateLimiter rate_limiter;
+RateLimiter write_rate_limiter;
+RateLimiter read_rate_limiter;
 
 // 与 Nginx 限流参数对齐：写接口 30r/m，读接口 120r/m
 constexpr int RATE_LIMIT_WRITE = 30;
@@ -81,7 +82,7 @@ int main() {
             client_ip = req.remote_ip_address;
         }
 
-        if (!rate_limiter.is_allowed(client_ip, RATE_LIMIT_WRITE)) {
+        if (!write_rate_limiter.is_allowed(client_ip, RATE_LIMIT_WRITE)) {
             crow::response res(429, "{\"error\":\"Too Many Requests\",\"retryAfter\":60}");
             res.add_header("Retry-After", "60");
             res.add_header("Content-Type", "application/json");
@@ -134,7 +135,7 @@ int main() {
             client_ip = req.remote_ip_address;
         }
 
-        if (!rate_limiter.is_allowed(client_ip, RATE_LIMIT_WRITE)) {
+        if (!write_rate_limiter.is_allowed(client_ip, RATE_LIMIT_WRITE)) {
             crow::response res(429, "{\"error\":\"Too Many Requests\",\"retryAfter\":60}");
             res.add_header("Retry-After", "60");
             res.add_header("Content-Type", "application/json");
@@ -236,7 +237,7 @@ int main() {
             client_ip = req.remote_ip_address;
         }
 
-        if (!rate_limiter.is_allowed(client_ip, RATE_LIMIT_READ)) {
+        if (!read_rate_limiter.is_allowed(client_ip, RATE_LIMIT_READ)) {
             crow::response res(429, "{\"error\":\"Too Many Requests\",\"retryAfter\":60}");
             res.add_header("Retry-After", "60");
             res.add_header("Content-Type", "application/json");

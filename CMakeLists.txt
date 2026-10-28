@@ -22,7 +22,7 @@ else()
     FetchContent_Declare(
         crow
         GIT_REPOSITORY https://github.com/CrowCpp/Crow.git
-        GIT_TAG v1.2.0
+        GIT_TAG fcf0c360b15fc245d884c71340b08ac20403ba36 # v1.3.5
     )
 endif()
 

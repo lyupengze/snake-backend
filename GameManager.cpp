@@ -192,6 +192,16 @@ SubmitResult GameManager::submit_score(const std::string& game_id, const std::st
 
     // 仅在数据库写入成功后才清除会话，避免 DB 故障导致玩家唯一一次提交机会丢失。
     std::lock_guard<std::mutex> db_lock(db_mtx_);
+
+    // DB 失败时恢复会话，允许玩家重试提交
+    auto restore_session = [&]() {
+        std::lock_guard<std::mutex> lock(session_mtx_);
+        auto it = active_sessions_.find(game_id);
+        if (it != active_sessions_.end()) {
+            it->second.submitted = false;
+        }
+    };
+
     const char* sql =
         "INSERT INTO scores (name, mode, date, score, timestamp) VALUES (?, ?, ?, ?, ?) "
         "ON CONFLICT(name, mode, date) DO UPDATE SET score = excluded.score, timestamp = "
@@ -201,6 +211,7 @@ SubmitResult GameManager::submit_score(const std::string& game_id, const std::st
 
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         std::cerr << "DB prepare failed: " << sqlite3_errmsg(db_) << std::endl;
+        restore_session();
         return SubmitResult::InternalError;
     }
 
@@ -216,12 +227,7 @@ SubmitResult GameManager::submit_score(const std::string& game_id, const std::st
     if (rc != SQLITE_DONE) {
         std::cerr << "DB write failed: " << sqlite3_errmsg(db_) << " (rc=" << rc << ")"
                   << std::endl;
-        // 写库失败时恢复会话，允许玩家重试提交
-        std::lock_guard<std::mutex> lock(session_mtx_);
-        auto it = active_sessions_.find(game_id);
-        if (it != active_sessions_.end()) {
-            it->second.submitted = false;
-        }
+        restore_session();
         return SubmitResult::InternalError;
     }
 

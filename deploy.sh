@@ -71,6 +71,8 @@ fi
 echo "Performing health check..."
 sleep 2
 
+# 健康检查经 Nginx 代理链路，同时验证 Nginx 配置和后端服务是否正常。
+# 部署时 Nginx 必须处于运行状态，否则检查会失败。
 HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --fail 'http://127.0.0.1/api/leaderboard?mode=classic')
 if [ "$HTTP_CODE" = "200" ]; then
     echo "API is healthy."
