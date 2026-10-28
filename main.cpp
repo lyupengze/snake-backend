@@ -23,10 +23,27 @@ static const std::string INTERNAL_SECRET = []() {
 struct RateLimiter {
     std::unordered_map<std::string, std::pair<int, std::chrono::steady_clock::time_point>> ips;
     std::mutex mtx;
+    std::chrono::steady_clock::time_point last_cleanup = std::chrono::steady_clock::now();
 
-    bool is_allowed(const std::string& ip) {
+    void cleanup(std::chrono::steady_clock::time_point now) {
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_cleanup).count() < 60)
+            return;
+        last_cleanup = now;
+
+        for (auto it = ips.begin(); it != ips.end();) {
+            if (std::chrono::duration_cast<std::chrono::seconds>(now - it->second.second).count() >
+                60)
+                it = ips.erase(it);
+            else
+                ++it;
+        }
+    }
+
+    bool is_allowed(const std::string& ip, int limit) {
         std::lock_guard<std::mutex> lock(mtx);
         auto now = std::chrono::steady_clock::now();
+        cleanup(now);
+
         auto& rec = ips[ip];
 
         if (std::chrono::duration_cast<std::chrono::seconds>(now - rec.second).count() > 60) {
@@ -35,13 +52,17 @@ struct RateLimiter {
             return true;
         }
 
-        if (rec.first >= 30)
+        if (rec.first >= limit)
             return false;
         rec.first++;
         return true;
     }
 };
 RateLimiter rate_limiter;
+
+// 与 Nginx 限流参数对齐：写接口 30r/m，读接口 120r/m
+constexpr int RATE_LIMIT_WRITE = 30;
+constexpr int RATE_LIMIT_READ = 120;
 
 int main() {
     GameManager game_manager;
@@ -60,8 +81,11 @@ int main() {
             client_ip = req.remote_ip_address;
         }
 
-        if (!rate_limiter.is_allowed(client_ip)) {
-            return crow::response(429, "Too Many Requests (Crow Layer)");
+        if (!rate_limiter.is_allowed(client_ip, RATE_LIMIT_WRITE)) {
+            crow::response res(429, "{\"error\":\"Too Many Requests\",\"retryAfter\":60}");
+            res.add_header("Retry-After", "60");
+            res.add_header("Content-Type", "application/json");
+            return res;
         }
 
         auto content_type = req.get_header_value("Content-Type");
@@ -110,8 +134,11 @@ int main() {
             client_ip = req.remote_ip_address;
         }
 
-        if (!rate_limiter.is_allowed(client_ip)) {
-            return crow::response(429, "Too Many Requests (Crow Layer)");
+        if (!rate_limiter.is_allowed(client_ip, RATE_LIMIT_WRITE)) {
+            crow::response res(429, "{\"error\":\"Too Many Requests\",\"retryAfter\":60}");
+            res.add_header("Retry-After", "60");
+            res.add_header("Content-Type", "application/json");
+            return res;
         }
 
         auto content_type = req.get_header_value("Content-Type");
@@ -204,6 +231,18 @@ int main() {
 
     CROW_ROUTE(app, "/api/leaderboard")
     ([&game_manager](const crow::request& req) {
+        std::string client_ip = req.get_header_value("X-Real-IP");
+        if (client_ip.empty()) {
+            client_ip = req.remote_ip_address;
+        }
+
+        if (!rate_limiter.is_allowed(client_ip, RATE_LIMIT_READ)) {
+            crow::response res(429, "{\"error\":\"Too Many Requests\",\"retryAfter\":60}");
+            res.add_header("Retry-After", "60");
+            res.add_header("Content-Type", "application/json");
+            return res;
+        }
+
         std::string mode = "classic";
 
         if (req.url_params.get("mode")) {

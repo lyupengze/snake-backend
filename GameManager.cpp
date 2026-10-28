@@ -216,6 +216,12 @@ SubmitResult GameManager::submit_score(const std::string& game_id, const std::st
     if (rc != SQLITE_DONE) {
         std::cerr << "DB write failed: " << sqlite3_errmsg(db_) << " (rc=" << rc << ")"
                   << std::endl;
+        // 写库失败时恢复会话，允许玩家重试提交
+        std::lock_guard<std::mutex> lock(session_mtx_);
+        auto it = active_sessions_.find(game_id);
+        if (it != active_sessions_.end()) {
+            it->second.submitted = false;
+        }
         return SubmitResult::InternalError;
     }
 

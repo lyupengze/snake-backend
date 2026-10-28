@@ -34,6 +34,15 @@ else
   LAST_HASH=""
 fi
 
+# 从权限受限的密钥文件读取，不再依赖环境变量
+SECRET_FILE="/etc/nginx/snake_secret.txt"
+if [ ! -f "$SECRET_FILE" ]; then
+    echo "ERROR: Secret file not found: $SECRET_FILE" >&2
+    echo "Create it with: openssl rand -hex 32 > $SECRET_FILE && chmod 600 $SECRET_FILE" >&2
+    exit 1
+fi
+INTERNAL_SECRET=$(cat "$SECRET_FILE")
+
 if [ "$CURRENT_HASH" != "$LAST_HASH" ]; then
   echo "Backend source code changed, rebuilding Docker image..."
   docker build -t snake-backend .
@@ -61,6 +70,13 @@ fi
 # --- Health check ---
 echo "Performing health check..."
 sleep 2
-curl -s http://127.0.0.1/api/leaderboard > /dev/null && echo "API is healthy." || echo "API check failed, please inspect logs."
+
+HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --fail 'http://127.0.0.1/api/leaderboard?mode=classic')
+if [ "$HTTP_CODE" = "200" ]; then
+    echo "API is healthy."
+else
+    echo "API health check failed (HTTP $HTTP_CODE), please inspect logs." >&2
+    exit 1
+fi
 
 echo "Deployment finished!"
