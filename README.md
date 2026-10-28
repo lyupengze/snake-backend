@@ -1,7 +1,7 @@
 # SnakeBattle Backend
 
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://isocpp.org/)
-[![Crow](https://img.shields.io/badge/Crow-1.2.0-green.svg)](https://github.com/CrowCpp/Crow)
+[![Crow](https://img.shields.io/badge/Crow-1.3.5-green.svg)](https://github.com/CrowCpp/Crow)
 [![SQLite](https://img.shields.io/badge/SQLite-3-blue.svg)](https://www.sqlite.org/)
 [![Docker](https://img.shields.io/badge/Docker-✓-2496ED.svg)](https://www.docker.com/)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey.svg)]()
@@ -44,7 +44,7 @@ snake/
 服务器在收到分数提交时执行 7 层校验：
 
 1. **密钥校验** — `X-Internal-Secret` 头必须匹配环境变量
-2. **IP 限流** — 每 IP 每 60 秒最多 30 次请求
+2. **IP 限流** — 读写分离：写接口（`/api/start`、`/api/score`）30 次/分，读接口（`/api/leaderboard`）120 次/分，429 响应为 JSON 格式并携带 `Retry-After` 头
 3. **Session 验证** — `gameId` 必须存在且未被提交过
 4. **tick 时序** — 操作序列必须严格递增且非负
 5. **帧数上限** — `max_tick ≤ 10000`，防止构造超长 payload
@@ -88,9 +88,20 @@ docker run -d \
 
 推荐使用 `deploy.sh` 一键部署。脚本通过源码 MD5 指纹比对实现增量构建——源码未变时跳过 Docker rebuild。
 
+### 密钥配置
+
+部署前需在服务器上创建密钥文件（权限 600，仅 root 可读）：
+
+```bash
+openssl rand -hex 32 > /etc/nginx/snake_secret.txt
+chmod 600 /etc/nginx/snake_secret.txt
+```
+
+`deploy.sh` 启动容器时自动从该文件读取密钥注入环境变量。Nginx 配置中通过 `include` 引用对应的 `/etc/nginx/snake_secret.conf`，在反代时注入 `X-Internal-Secret` 头。
+
 ### 环境变量
 
-| 变量 | 说明 |
-|---|---|
-| `INTERNAL_SECRET` | Nginx 注入的密钥头，用于拦截直连 |
-| `TZ` | 时区，影响每日挑战的日期结算 |
+| 变量 | 来源 | 说明 |
+|---|---|---|
+| `INTERNAL_SECRET` | `/etc/nginx/snake_secret.txt` | 由 deploy.sh 注入，Nginx 反代时校验 |
+| `TZ` | Docker 启动参数 | 时区，影响每日挑战的日期结算 |
