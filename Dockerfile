@@ -15,12 +15,17 @@ RUN set -eux; \
 
 # ForceIPv4：避免先尝试不可达的 IPv6 地址而空等。
 # Timeout/Retries：连接卡住时 30 秒内失败重试，而不是无限等待。
+#
+# ca-certificates 必须显式列出：git 只把 CA 证书列为 Recommends，
+# 用了 --no-install-recommends 后它不会被带上，下一步 FetchContent 用 HTTPS
+# 克隆 Crow 时会直接报 "server certificate verification failed. CAfile: none"。
 RUN apt-get -o Acquire::ForceIPv4=true \
             -o Acquire::http::Timeout=30 \
             -o Acquire::https::Timeout=30 \
             -o Acquire::Retries=5 \
             update \
  && apt-get install -y --no-install-recommends \
+        ca-certificates \
         build-essential \
         cmake \
         libasio-dev \
@@ -31,6 +36,7 @@ RUN apt-get -o Acquire::ForceIPv4=true \
 WORKDIR /app
 COPY . .
 
+# Crow-master/ 在 .gitignore 里，不进仓库，因此容器内只能走 FetchContent 从 GitHub 克隆。
 RUN mkdir build && cd build && cmake .. && make -j$(nproc)
 
 
