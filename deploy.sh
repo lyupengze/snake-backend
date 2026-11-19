@@ -73,7 +73,15 @@ sleep 2
 
 # 健康检查经 Nginx 代理链路，同时验证 Nginx 配置和后端服务是否正常。
 # 部署时 Nginx 必须处于运行状态，否则检查会失败。
-HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --fail 'http://127.0.0.1/api/leaderboard?mode=classic')
+#
+# 站点已启用 Let's Encrypt HTTPS，certbot 会插入 80 -> 443 的 301 跳转，
+# 因此这里改走 https。用 --resolve 把域名钉到 127.0.0.1：
+#   1) 不依赖本机 DNS 解析（解析到公网 IP 时可能回环不通或绕一圈）；
+#   2) SNI 仍是 snakebattle.cn，能命中正确的 server 块并校验证书链。
+# --max-time 防止 Nginx 挂死时脚本无限等待。
+HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+  --resolve snakebattle.cn:443:127.0.0.1 \
+  'https://snakebattle.cn/api/leaderboard?mode=classic' || echo "000")
 if [ "$HTTP_CODE" = "200" ]; then
     echo "API is healthy."
 else
